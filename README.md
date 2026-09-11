@@ -27,8 +27,6 @@ weglet/
 └── docs/       Architecture and security model
 ```
 
-Roughly 4,400 lines of C++, 5,900 of Rust, 3,900 of TypeScript/CSS/HTML.
-
 ## Why Rust for the logic
 
 Chromium gives an embedder a `WebContentsDelegate` and a few dozen other

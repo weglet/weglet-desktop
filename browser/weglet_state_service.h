@@ -80,6 +80,11 @@ class WegletStateService : public base::SupportsUserData::Data {
   static WegletStateService* FromBrowserContext(
       content::BrowserContext* browser_context);
 
+  // Destroys the service ahead of the context's other user data: it
+  // points at the security guard, which the context also owns, in no
+  // order of its own.
+  static void RemoveFromBrowserContext(content::BrowserContext* browser_context);
+
   WegletStateService(WegletBridge* bridge, WegletSecurityGuard* guard,
                      WegletPermissionDelegate* permission_delegate,
                      WindowsSpellChecker* spell_checker);

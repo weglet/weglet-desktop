@@ -23,7 +23,7 @@ WegletContentBrowserClient::~WegletContentBrowserClient() = default;
 std::unique_ptr<content::BrowserMainParts>
 WegletContentBrowserClient::CreateBrowserMainParts(bool is_integration_test) {
   auto parts = std::make_unique<WegletBrowserMainParts>();
-  browser_main_parts_ = parts.get();
+  browser_main_parts_ = parts->GetWeakPtr();
   return parts;
 }
 

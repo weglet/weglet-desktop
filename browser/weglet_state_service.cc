@@ -61,6 +61,13 @@ void WegletStateService::CreateForBrowserContext(
 }
 
 // static
+// static
+void WegletStateService::RemoveFromBrowserContext(
+    content::BrowserContext* browser_context) {
+  browser_context->RemoveUserData(kUserDataKey);
+}
+
+// static
 WegletStateService* WegletStateService::FromBrowserContext(
     content::BrowserContext* browser_context) {
   if (!browser_context) {

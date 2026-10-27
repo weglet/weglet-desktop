@@ -27,8 +27,12 @@ WegletProfileManager::~WegletProfileManager() {
         !instance->bridge->FlushSettings()) {
       LOG(ERROR) << "could not write settings for " << name << " -- the last changes are lost";
     }
-    // Before the bridge: the state service is owned by the context and
-    // holds a pointer to it.
+    // Reverse order of construction: the observer holds the bridge and the
+    // state service, the state service holds the guard, and the context
+    // owns both of those and holds the bridge.
+    instance->download_observer.reset();
+    WegletStateService::RemoveFromBrowserContext(
+        instance->browser_context.get());
     instance->browser_context.reset();
     instance->bridge.reset();
   }

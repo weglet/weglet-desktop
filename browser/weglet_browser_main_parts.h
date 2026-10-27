@@ -39,6 +39,11 @@ class WegletBrowserMainParts : public content::BrowserMainParts {
   WegletBrowserMainParts();
   WegletBrowserMainParts(const WegletBrowserMainParts&) = delete;
   WegletBrowserMainParts& operator=(const WegletBrowserMainParts&) = delete;
+
+  // For a holder that can outlive this: the content browser client.
+  base::WeakPtr<WegletBrowserMainParts> GetWeakPtr() {
+    return weak_factory_.GetWeakPtr();
+  }
   ~WegletBrowserMainParts() override;
 
   WindowsSpellChecker* spell_checker() { return spell_checker_.get(); }

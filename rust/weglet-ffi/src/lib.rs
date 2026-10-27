@@ -796,11 +796,13 @@ pub unsafe extern "C" fn weglet_omnibox_suggestion_is_bookmark_at(
 // 0 = nothing to say, 1 = warn, 2 = block (ints, not an enum, so the
 // layout across the boundary stays fixed). `title`/`reason`/`host` may
 // each be null; a non-null one is always filled, even when the answer
-// is 0. A pure function of the URL; the user's own block list is
-// weglet_is_host_blocked.
+// is 0. Judged against the profile's own lists; the user's own block list
+// is weglet_is_host_blocked.
 ///
 /// # Safety
 ///
+/// `state` must be null or a live pointer from [`weglet_state_new`]; a
+/// null one answers 0, like every call here given a null handle.
 /// `url` must be null or NUL-terminated. Each of `title`, `reason` and
 /// `host` must be null or a writable `char*`; any string written is
 /// owned by the caller and freed with `weglet_string_free`.

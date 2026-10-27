@@ -32,6 +32,10 @@ executable("weglet") {
   data_deps = [
     ":weglet_pak",
 
+    # v8_context_snapshot.bin. Every child process except the GPU one loads
+    # it at startup and stops with a fatal error when the file is missing.
+    "//tools/v8_context_snapshot",
+
     # Not a build input: it is here so the comparison runs. A resource
     # pack Chromium started expecting is otherwise found by a CHECK at
     # startup.

@@ -8,15 +8,21 @@ publish.workspace = true
 
 [lib]
 name = "weglet_ffi"
-# Static, not cdylib: GN links this straight into weglet.exe, so there is
-# no second file to ship, sign or keep in step with the binary.
+# A shared library, not a staticlib. A staticlib carries its own copy of
+# Rust's std, and a build with is_component_build=false links Chromium's
+# in-tree std into weglet.exe as well: the link fails on duplicate std
+# symbols such as rust_eh_personality. Inside weglet_ffi.dll the second
+# std stays private to the library.
+# Rejected: building these crates with GN's Rust support on Chromium's std,
+# because every crates.io dependency in Cargo.lock would need a
+# hand-maintained GN target.
 #
-# The rlib alongside it is for tests/boundary.rs, which declares the entry
-# points in an `extern "C"` block exactly as weglet_ffi.h does and links
-# against them -- so a signature that drifts from the header fails to link
-# in `cargo test` rather than becoming undefined behaviour in the browser.
-# Nothing ships it; build_rust.py copies the staticlib and ignores this.
-crate-type = ["staticlib", "rlib"]
+# The rlib alongside it is for the tests under tests/, which bind the
+# entry points with the types weglet_ffi.h declares -- so a signature that
+# drifts from the header fails to compile in `cargo test` rather than
+# becoming undefined behaviour in the browser. Nothing ships it;
+# build_rust.py copies the shared library and ignores this.
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 weglet-core = { path = "../weglet-core" }

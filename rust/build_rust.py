@@ -68,14 +68,22 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--manifest", required=True, help="path to rust/Cargo.toml")
     parser.add_argument("--target", required=True, help="rust target triple")
-    parser.add_argument("--out", required=True, help="where to put the static library")
+    parser.add_argument(
+        "--target-dir", required=True, help="cargo's target directory"
+    )
+    parser.add_argument(
+        "--out",
+        required=True,
+        action="append",
+        help="where to copy a file cargo built, matched by file name; repeatable",
+    )
     parser.add_argument("--profile", default="release", choices=["debug", "release"])
     parser.add_argument("--depfile", help="GN depfile to write")
     args = parser.parse_args()
 
     manifest = os.path.abspath(args.manifest)
     workspace = os.path.dirname(manifest)
-    out = os.path.abspath(args.out)
+    target_dir = os.path.abspath(args.target_dir)
 
     generate(workspace)
 
@@ -87,10 +95,6 @@ def main() -> int:
             "https://rustup.rs and re-run gn gen.\n"
         )
         return 1
-
-    # Its own target directory inside the GN output tree: sharing one with
-    # a developer's `cargo build` means fighting over the same lock.
-    target_dir = os.path.join(os.path.dirname(out), "rust")
 
     command = [
         cargo,
@@ -111,25 +115,33 @@ def main() -> int:
     if args.profile == "release":
         command.append("--release")
 
-    result = subprocess.run(command, cwd=workspace)
+    environment = dict(os.environ)
+    if args.target.endswith("-windows-msvc"):
+        # Links the C runtime statically into weglet_ffi.dll, the way
+        # Chromium links it into weglet.exe. With the default dynamic CRT
+        # the browser fails to start on a machine without the Visual C++
+        # redistributable.
+        # RUSTFLAGS, not a .cargo/config.toml: it applies to every crate in
+        # the graph, and a RUSTFLAGS set in the environment would silently
+        # replace a config file's flags.
+        environment["RUSTFLAGS"] = " ".join(
+            flag
+            for flag in (environment.get("RUSTFLAGS"), "-C target-feature=+crt-static")
+            if flag
+        )
+
+    result = subprocess.run(command, cwd=workspace, env=environment)
     if result.returncode != 0:
         return result.returncode
 
-    # Windows names it weglet_ffi.lib, everything else libweglet_ffi.a.
     built_dir = os.path.join(target_dir, args.target, args.profile)
-    candidates = ["weglet_ffi.lib", "libweglet_ffi.a"]
-    for name in candidates:
-        built = os.path.join(built_dir, name)
-        if os.path.exists(built):
-            os.makedirs(os.path.dirname(out), exist_ok=True)
-            shutil.copy2(built, out)
-            break
-    else:
-        sys.stderr.write(
-            f"cargo reported success but no static library in {built_dir}\n"
-            f"looked for: {', '.join(candidates)}\n"
-        )
-        return 1
+    for out in args.out:
+        built = os.path.join(built_dir, os.path.basename(out))
+        if not os.path.exists(built):
+            sys.stderr.write(f"cargo reported success but did not produce {built}\n")
+            return 1
+        os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
+        shutil.copy2(built, out)
 
     # Tells ninja to re-run this when any source changes.
     if args.depfile:
@@ -137,7 +149,7 @@ def main() -> int:
         # GN has to know when to ask it at all.
         build_support.write_depfile(
             args.depfile,
-            args.out,
+            args.out[0],
             workspace,
             lambda name: name.endswith(".rs")
             or name in ("Cargo.toml", "Cargo.lock"),

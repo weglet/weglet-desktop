@@ -55,6 +55,11 @@ pub struct WegletState {
     // never persisted. Not `dirty`-tracked like the stores above -- it is
     // derived from them, not a store of its own.
     omnibox_suggestions: Vec<weglet_core::OmniboxSuggestion>,
+    // The session as it stood when the last window closed, saved in place
+    // of the live state until a window opens again. Closing the last
+    // window resets the model to one blank tab, and every way of quitting
+    // closes the last window before the final save.
+    closed_session: Option<Session>,
     // Set when the matching store changed and has not reached the disk
     // yet. An atomic write ends in fsync, and the moment something
     // changed -- a click, a navigation, a download progress callback --
@@ -131,6 +136,7 @@ fn build_state(profile: &str) -> WegletState {
         paths,
         profile_name,
         omnibox_suggestions: Vec::new(),
+        closed_session: None,
         settings_dirty: false,
         bookmarks_dirty: false,
         history_dirty: false,
@@ -320,18 +326,31 @@ pub unsafe extern "C" fn weglet_window_id_at(state: *const WegletState, index: u
 #[no_mangle]
 pub unsafe extern "C" fn weglet_open_window(state: *mut WegletState) -> u64 {
     // SAFETY: contract of as_mut.
-    unsafe { as_mut(state) }
-        .and_then(|state| state.state.open_window())
-        .map_or(0, |id| id.value())
+    let Some(state) = (unsafe { as_mut(state) }) else {
+        return 0;
+    };
+    let Some(window) = state.state.open_window() else {
+        return 0;
+    };
+    state.closed_session = None;
+    window.value()
 }
 
-// Its tabs go with it. Closing the last window leaves a fresh one.
+// Its tabs go with it. Closing the last window leaves a fresh one, and
+// the session keeps what the closed window held -- see closed_session.
 #[doc = safety_doc!()]
 #[no_mangle]
 pub unsafe extern "C" fn weglet_close_window(state: *mut WegletState, window: u64) -> bool {
     // SAFETY: contract of as_mut.
-    unsafe { as_mut(state) }
-        .is_some_and(|state| state.state.close_window(WindowId::new(window)))
+    let Some(state) = (unsafe { as_mut(state) }) else {
+        return false;
+    };
+    let window = WindowId::new(window);
+    let is_last = state.state.windows().len() == 1 && state.state.window(window).is_some();
+    if is_last {
+        state.closed_session = Some(session_of(&state.state));
+    }
+    state.state.close_window(window)
 }
 
 // Which window a tab is in, or 0 for no such tab.
@@ -1839,29 +1858,31 @@ pub unsafe extern "C" fn weglet_save_session(state: *const WegletState) -> bool 
         return false;
     };
 
-    let session = Session {
+    let session = match &state.closed_session {
+        Some(closed) => closed.clone(),
+        None => session_of(&state.state),
+    };
+    session.save(&paths.session_file()).is_ok()
+}
+
+fn session_of(state: &AppState) -> Session {
+    Session {
         windows: state
-            .state
             .windows()
             .iter()
             .map(|window| SessionWindow {
                 tabs: state
-                    .state
                     .tabs_in(window.id)
                     .map(|tab| SessionTab {
                         entries: tab.history.entries().to_vec(),
                         cursor: tab.history.cursor(),
                     })
                     .collect(),
-                active: state
-                    .state
-                    .position_in_window(window.active())
-                    .unwrap_or(0),
+                active: state.position_in_window(window.active()).unwrap_or(0),
             })
             .collect(),
         ..Session::default()
-    };
-    session.save(&paths.session_file()).is_ok()
+    }
 }
 
 // Reads the four optional files a profile may carry. Errors are dropped:

@@ -53,6 +53,8 @@ pub mod abi {
         weglet_ffi::weglet_open_window;
     pub const close_window: unsafe extern "C" fn(*mut WegletState, u64) -> bool =
         weglet_ffi::weglet_close_window;
+    pub const save_session: unsafe extern "C" fn(*const WegletState) -> bool =
+        weglet_ffi::weglet_save_session;
     pub const tab_window: unsafe extern "C" fn(*const WegletState, u64) -> u64 =
         weglet_ffi::weglet_tab_window;
 

@@ -41,7 +41,9 @@ size_t weglet_window_count(const WegletState* state);
 uint64_t weglet_window_id_at(const WegletState* state, size_t index);
 // The new window's id, or 0 at the ceiling. Starts with one blank tab.
 uint64_t weglet_open_window(WegletState* state);
-// Its tabs go with it. Closing the last window leaves a fresh one.
+// Its tabs go with it. Closing the last window leaves a fresh one, and
+// weglet_save_session keeps saving what the closed window held until a
+// window opens again.
 bool weglet_close_window(WegletState* state, uint64_t window);
 // Which window a tab is in, or 0 for no such tab.
 uint64_t weglet_tab_window(const WegletState* state, uint64_t id);

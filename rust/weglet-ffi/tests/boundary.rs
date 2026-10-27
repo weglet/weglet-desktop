@@ -50,6 +50,55 @@ fn tabs_open_navigate_and_close() {
     unsafe { abi::state_free(state) };
 }
 
+// Every way of quitting closes the last window first, and that resets the
+// model to one blank tab before the final save.
+#[test]
+fn closing_the_last_window_keeps_its_tabs_for_the_next_launch() {
+    let _f = guard("last-window");
+    let state = abi::state_new();
+    let w = unsafe { abi::window_id_at(state, 0) };
+    let id = unsafe { abi::active_tab_id(state, w) };
+    unsafe { abi::tab_navigated(state, id, c("https://a.example").as_ptr()) };
+    assert!(unsafe { abi::close_window(state, w) });
+    assert!(unsafe { abi::save_session(state) });
+    unsafe { abi::state_free(state) };
+
+    let restored = abi::state_new();
+    let w = unsafe { abi::window_id_at(restored, 0) };
+    let id = unsafe { abi::active_tab_id(restored, w) };
+    assert_eq!(take(unsafe { abi::tab_url(restored, id) }), "https://a.example");
+    unsafe { abi::state_free(restored) };
+}
+
+#[test]
+fn a_window_opened_after_the_last_one_closed_is_what_gets_saved() {
+    let _f = guard("reopened");
+    let state = abi::state_new();
+    let w = unsafe { abi::window_id_at(state, 0) };
+    let id = unsafe { abi::active_tab_id(state, w) };
+    unsafe { abi::tab_navigated(state, id, c("https://a.example").as_ptr()) };
+    assert!(unsafe { abi::close_window(state, w) });
+
+    let reopened = unsafe { abi::open_window(state) };
+    let id = unsafe { abi::active_tab_id(state, reopened) };
+    unsafe { abi::tab_navigated(state, id, c("https://b.example").as_ptr()) };
+    assert!(unsafe { abi::save_session(state) });
+    unsafe { abi::state_free(state) };
+
+    let restored = abi::state_new();
+    let urls: Vec<String> = (0..unsafe { abi::window_count(restored) })
+        .flat_map(|index| {
+            let w = unsafe { abi::window_id_at(restored, index) };
+            (0..unsafe { abi::tab_count(restored, w) })
+                .map(move |position| unsafe { abi::tab_id_at(restored, w, position) })
+        })
+        .map(|id| take(unsafe { abi::tab_url(restored, id) }))
+        .collect();
+    assert!(urls.contains(&"https://b.example".to_string()), "{urls:?}");
+    assert!(!urls.contains(&"https://a.example".to_string()), "{urls:?}");
+    unsafe { abi::state_free(restored) };
+}
+
 // Every one of these would be a read past the end if the entry point
 // trusted its argument.
 #[test]

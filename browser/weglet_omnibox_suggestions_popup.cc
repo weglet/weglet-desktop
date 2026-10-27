@@ -101,9 +101,18 @@ void WegletOmniboxSuggestionsPopup::Show(std::vector<Suggestion> items,
   const int item_count = static_cast<int>(items.size());
   state_->SetPendingOmniboxSuggestions(
       contents_.get(), {std::move(items), highlighted_index});
-  // Now rather than at the end of this turn: the page should hold the new
-  // rows before the widget shows it again. A page still loading asks for
-  // them itself once its script runs.
+  // A renderer that crashed or was killed for memory leaves a dead page,
+  // and a push reaches nothing: load it again, and it asks for the rows
+  // itself once its script runs.
+  if (contents_->IsCrashed()) {
+    content::NavigationController::LoadURLParams load(
+        PageUrl(contract::kOmniboxSuggestionsPath));
+    load.transition_type = ui::PAGE_TRANSITION_AUTO_TOPLEVEL;
+    contents_->GetController().LoadURLWithParams(load);
+  }
+  // Sent now rather than at the end of this turn, so the push leaves
+  // before the widget shows again. The renderer may still paint the
+  // previous rows for a frame.
   state_->Notify(WegletStateService::kOmniboxSuggestions);
   state_->FlushNow();
 

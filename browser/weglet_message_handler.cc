@@ -283,6 +283,49 @@ void WegletMessageHandler::Dispatch(std::string_view name,
     state_->Notify(WegletStateService::kFavicons);
     return;
   }
+  if (name == "setAskWhereToSaveDownloads") {
+    bridge_->SetAskWhereToSaveDownloads(BoolAt(args, 0));
+    state_->Notify(WegletStateService::kSettings);
+    return;
+  }
+  if (name == "switchProfile") {
+    if (window_) {
+      window_->RequestProfileSwitch(StringAt(args, 0));
+    }
+    return;
+  }
+  if (name == "openProfileWindow") {
+    if (window_) {
+      window_->RequestOpenProfileWindow(StringAt(args, 0));
+    }
+    return;
+  }
+  if (name == "renameProfile") {
+    const std::string old_name = StringAt(args, 0);
+    const std::string new_name = StringAt(args, 1);
+    // Any profile open in this process, not only this window's: several
+    // can be live at once, and each holds its directory open.
+    if (!WegletWindow::IsProfileInUse(old_name) &&
+        !WegletWindow::IsProfileInUse(new_name) &&
+        WegletBridge::RenameProfile(old_name, new_name)) {
+      state_->Notify(WegletStateService::kSettings);
+    }
+    return;
+  }
+  if (name == "deleteProfile") {
+    const std::string profile = StringAt(args, 0);
+    if (!WegletWindow::IsProfileInUse(profile) &&
+        WegletBridge::DeleteProfile(profile)) {
+      state_->Notify(WegletStateService::kSettings);
+    }
+    return;
+  }
+  if (name == "createProfileShortcut") {
+    if (window_) {
+      window_->CreateProfileShortcut(StringAt(args, 0));
+    }
+    return;
+  }
   if (name == "refreshThreatFeed") {
     content::BrowserContext* browser_context =
         web_ui()->GetWebContents()->GetBrowserContext();
@@ -337,6 +380,18 @@ void WegletMessageHandler::Dispatch(std::string_view name,
   }
   if (name == "navigate") {
     window_->NavigateActiveTabFromOmnibox(StringAt(args, 0));
+  } else if (name == "queryOmniboxSuggestions") {
+    window_->QueryOmniboxSuggestions(StringAt(args, 0),
+                                     static_cast<int>(IndexAt(args, 1)),
+                                     static_cast<int>(IndexAt(args, 2)));
+  } else if (name == "hideOmniboxSuggestions") {
+    window_->HideOmniboxSuggestions();
+  } else if (name == "moveOmniboxHighlightNext") {
+    window_->MoveOmniboxHighlight(/*forward=*/true);
+  } else if (name == "moveOmniboxHighlightPrevious") {
+    window_->MoveOmniboxHighlight(/*forward=*/false);
+  } else if (name == "acceptOmniboxSuggestion") {
+    window_->AcceptOmniboxSuggestion(static_cast<int>(IndexAt(args, 0)));
   } else if (name == "goBack") {
     window_->GoBack();
   } else if (name == "goForward") {

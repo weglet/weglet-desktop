@@ -29,6 +29,10 @@ class WegletTabObserver : public content::WebContentsObserver {
   // content::WebContentsObserver:
   void DidFinishNavigation(
       content::NavigationHandle* navigation_handle) override;
+  // The engine dropped entries from the back/forward list on its own.
+  void NavigationListPruned(
+      const content::PrunedDetails& pruned_details) override;
+  void NavigationEntriesDeleted() override;
   void TitleWasSet(content::NavigationEntry* entry) override;
   void DidStartLoading() override;
   void DidStopLoading() override;

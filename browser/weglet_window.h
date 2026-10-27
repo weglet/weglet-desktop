@@ -21,10 +21,12 @@
 #include "content/public/common/page_zoom.h"
 #include "third_party/blink/public/mojom/choosers/file_chooser.mojom-forward.h"
 #include "ui/base/accelerators/accelerator.h"
+#include "ui/base/window_open_disposition.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/views/controls/webview/unhandled_keyboard_event_handler.h"
 #include "ui/views/widget/widget_delegate.h"
 #include "url/gurl.h"
+#include "weglet/browser/weglet_bridge.h"
 #include "weglet/browser/weglet_state_service.h"
 
 namespace content {
@@ -55,6 +57,7 @@ class WegletSiteInfoPopup;
 class WegletStateService;
 class WegletTabObserver;
 class WegletToastPopup;
+class WegletOmniboxSuggestionsPopup;
 
 // One browser window: a toolbar above, the active tab's page below. The
 // toolbar is a WebContents showing chrome://weglet/toolbar.html, not
@@ -87,6 +90,44 @@ class WegletWindow : public views::WidgetDelegate,
   static int window_count();
   static void SetQuitClosure(base::OnceClosure quit);
 
+  // Closes every open window -- see RequestProfileSwitch. Each Close()
+  // is asynchronous, so this returns before window_count() reaches 0.
+  static void CloseAllWindows();
+
+  // Set once by WegletBrowserMainParts, which owns the WegletBridge a
+  // clean switch has to check the new name against and flush before
+  // handing off.
+  static void SetProfileSwitchHandler(
+      base::RepeatingCallback<void(const std::string&)> handler);
+  // Forwards to the handler above, if one was set. A no-op otherwise --
+  // there is no profile-switch handler outside a real browser process.
+  void RequestProfileSwitch(const std::string& profile_name);
+
+  // Set once by WegletBrowserMainParts. Opens a new window into
+  // `profile_name` in this same process, building its context and
+  // bridge first if this is the first window into it this run.
+  static void SetOpenProfileWindowHandler(
+      base::RepeatingCallback<void(const std::string&)> handler);
+  void RequestOpenProfileWindow(const std::string& profile_name);
+
+  // Set once by WegletBrowserMainParts. True when `profile_name` is open in
+  // this process, in a window or not: its directory is in use, and
+  // deleting or renaming it would pull files out from under a live
+  // context. False when no handler is set.
+  static void SetProfileInUseCheck(
+      base::RepeatingCallback<bool(const std::string&)> check);
+  static bool IsProfileInUse(const std::string& profile_name);
+
+  // Whether any window shows `bridge`'s model -- a profile with none is
+  // shown again from the windows its model kept.
+  static bool HasWindowFor(const WegletBridge* bridge);
+
+  // Writes a desktop .lnk that launches this exe with
+  // --profile=<profile_name>, off the UI thread -- shortcut creation is
+  // blocking COM/file work, which the UI thread disallows post-startup.
+  // Reports the result as a toast once it's done.
+  void CreateProfileShortcut(const std::string& profile_name);
+
   WegletWindow(const WegletWindow&) = delete;
   WegletWindow& operator=(const WegletWindow&) = delete;
   ~WegletWindow() override;
@@ -94,6 +135,14 @@ class WegletWindow : public views::WidgetDelegate,
   // Called by a page's message handler, for the things that are a
   // window's business: which tab is in front and where it goes.
   void NavigateActiveTabFromOmnibox(const std::string& input);
+
+  // The address bar's dropdown. `anchor_left`/`anchor_bottom` are the
+  // address bar's own on-screen rect, like OpenSaveShortcutPopup's.
+  void QueryOmniboxSuggestions(const std::string& input, int anchor_left, int anchor_bottom);
+  void HideOmniboxSuggestions();
+  void MoveOmniboxHighlight(bool forward);
+  void AcceptOmniboxSuggestion(int index);
+
   void GoBack();
   void GoForward();
   void Reload();
@@ -179,7 +228,10 @@ class WegletWindow : public views::WidgetDelegate,
   void RegisterWebContents(content::WebContents* contents);
 
   // Called by the per-tab observer when the engine reports a change.
-  void OnTabNavigated(uint64_t id, const GURL& url, bool same_document);
+  // The engine's back/forward list for tab `id` changed: a navigation
+  // committed, or entries were dropped. `new_document` is false for a
+  // pushState or a fragment change.
+  void OnTabBackForwardListChanged(uint64_t id, bool new_document);
   void OnTabTitleChanged(uint64_t id, const std::string& title);
   void OnTabLoadingChanged(uint64_t id, bool loading);
 
@@ -197,18 +249,23 @@ class WegletWindow : public views::WidgetDelegate,
 
   // content::WebContentsDelegate:
   void CloseContents(content::WebContents* source) override;
+  // A link or a navigation the page itself cannot start: in the tab it came
+  // from, or in a new one, as `params.disposition` says.
   content::WebContents* OpenURLFromTab(
       content::WebContents* source,
       const content::OpenURLParams& params,
       base::OnceCallback<void(content::NavigationHandle&)>
           navigation_handle_callback) override;
-  bool IsWebContentsCreationOverridden(
-      content::RenderFrameHost* opener,
-      content::SiteInstance* source_site_instance,
-      content::mojom::WindowContainerType window_container_type,
-      const GURL& opener_url,
-      const std::string& frame_name,
-      const GURL& target_url) override;
+  // window.open: content has already created `new_contents`, with its
+  // opener, and this makes it a tab.
+  content::WebContents* AddNewContents(
+      content::WebContents* source,
+      std::unique_ptr<content::WebContents> new_contents,
+      const GURL& target_url,
+      WindowOpenDisposition disposition,
+      const blink::mojom::WindowFeatures& window_features,
+      bool user_gesture,
+      bool* was_blocked) override;
   bool HandleContextMenu(content::RenderFrameHost& render_frame_host,
                          const content::ContextMenuParams& params) override;
   // A key the active WebContents (toolbar or tab) didn't want -- the only
@@ -286,9 +343,22 @@ class WegletWindow : public views::WidgetDelegate,
 
   static void QuitIfLastWindow();
 
-  // Builds a WebContents for `id` and shows it: on startup for the
-  // restored active tab, and lazily for the others.
+  // Builds a WebContents for `id` and loads the model's URL in it: on
+  // startup for the restored active tab, and lazily for the others.
   content::WebContents* EnsureContentsFor(uint64_t id);
+
+  // Makes `contents` the WebContents of tab `id`, without loading anything:
+  // the caller, or content itself for window.open, starts the navigation.
+  content::WebContents* AttachContents(
+      uint64_t id,
+      std::unique_ptr<content::WebContents> contents);
+
+  // Opens a tab in the model for `url` and attaches `contents` to it. A
+  // background disposition leaves the current tab in front. Null at the
+  // tab ceiling, with `contents` dropped.
+  content::WebContents* AddTab(const GURL& url,
+                               WindowOpenDisposition disposition,
+                               std::unique_ptr<content::WebContents> contents);
 
   // Points the visible area at the active tab's contents, creating them if
   // this is the first time that tab is shown.
@@ -297,6 +367,16 @@ class WegletWindow : public views::WidgetDelegate,
   // The URL to load for an address the model holds. "weglet://settings"
   // and the rest never reach the engine.
   static GURL ResolveForEngine(const std::string& address);
+
+  // Shared by NavigateActiveTabFromOmnibox's two paths (typed text and
+  // an accepted suggestion): loads an already-resolved URL in the active
+  // tab. `resolved` is never re-parsed as a search.
+  void NavigateActiveTabToResolvedUrl(const std::string& resolved);
+
+  // (Re)shows omnibox_suggestions_popup_ from omnibox_suggestions_,
+  // omnibox_highlighted_ and the remembered anchor. Creates the popup on
+  // first use.
+  void ShowOmniboxSuggestionsPopup();
 
   static int window_count_;
 
@@ -322,10 +402,20 @@ class WegletWindow : public views::WidgetDelegate,
   std::unique_ptr<WegletPermissionPrompt> permission_prompt_;
   std::unique_ptr<WegletSiteInfoPopup> site_info_popup_;
   std::unique_ptr<WegletToastPopup> toast_popup_;
+  std::unique_ptr<WegletOmniboxSuggestionsPopup> omnibox_suggestions_popup_;
 
   // Oldest first, capped at kMaxToasts by ShowToast.
   std::vector<WegletStateService::PendingToast> toasts_;
   int next_toast_id_ = 1;
+
+  // The address bar's current dropdown, and which row (if any) is
+  // highlighted for Enter/arrow-key selection. Cleared by
+  // HideOmniboxSuggestions. `omnibox_anchor_*` is the address bar's own
+  // rect, remembered so MoveOmniboxHighlight can re-show at the same spot.
+  std::vector<WegletBridge::OmniboxSuggestion> omnibox_suggestions_;
+  int omnibox_highlighted_ = -1;
+  int omnibox_anchor_left_ = 0;
+  int omnibox_anchor_bottom_ = 0;
 
   views::UnhandledKeyboardEventHandler unhandled_keyboard_event_handler_;
 
@@ -346,8 +436,9 @@ class WegletWindow : public views::WidgetDelegate,
   std::map<uint64_t, Tab> tabs_;
 
   // What the open context menu acts on -- the tab it was opened over, and
-  // the link under the cursor if any. Cleared on hide.
-  raw_ptr<content::WebContents> pending_context_menu_contents_ = nullptr;
+  // the link under the cursor if any. Cleared on hide. Weak: the tab can
+  // close while the menu is open, from window.close() for one.
+  base::WeakPtr<content::WebContents> pending_context_menu_contents_;
   GURL pending_context_menu_link_;
   gfx::Point pending_context_menu_point_;
   gfx::Point pending_context_menu_screen_point_;

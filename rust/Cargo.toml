@@ -1,5 +1,5 @@
-# Everything Rust in Weglet. Built by cargo as a static library and
-# linked into weglet.exe by GN -- see weglet/BUILD.gn.
+# Everything Rust in Weglet. Built by cargo as a shared library that
+# weglet.exe links against -- see rust/BUILD.gn.
 #
 # Cargo rather than GN's own Rust support because the dependency set is
 # resolved from crates.io. Declaring each one as a third_party GN target
@@ -23,7 +23,7 @@ unsafe_code = "deny"
 all = { level = "warn", priority = -1 }
 
 [profile.release]
-# Matches the Chromium build it links into: no unwinding across the FFI
+# Matches the Chromium build that loads it: no unwinding across the FFI
 # boundary, and dead code stripped at link time.
 panic = "abort"
 lto = true

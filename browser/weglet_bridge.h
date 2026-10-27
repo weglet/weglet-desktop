@@ -104,20 +104,54 @@ class WegletBridge {
     bool threat_feed_enabled = false;
     uint64_t threat_feed_updated_at = 0;
     bool threat_feed_last_update_failed = false;
+    bool ask_where_to_save_downloads = false;
+    std::vector<std::string> profiles;
+    std::string active_profile;
+    // Parallel to `profiles`.
+    std::vector<std::string> profile_colors;
   };
 
   WegletBridge();
+  // As the default constructor, but loads `profile`'s own data instead
+  // of "Default" -- see WegletBrowserContext, which is expected to be
+  // pointed at the same profile so cookies and settings agree on where
+  // they both live.
+  explicit WegletBridge(const std::string& profile);
   WegletBridge(const WegletBridge&) = delete;
   WegletBridge& operator=(const WegletBridge&) = delete;
   ~WegletBridge();
+
+  // Whether `name` could become a profile directory -- no path
+  // separators, nothing a filesystem would reject. Static: callable
+  // before any WegletBridge exists, to resolve --profile at startup.
+  static bool IsValidProfileName(const std::string& name);
+  // The existing profile `name` refers to, in its own spelling: Windows
+  // compares names without regard to case, so "work" is the profile
+  // "Work". `name` itself when no profile has it yet.
+  static std::string CanonicalProfileName(const std::string& name);
+
+  // This instance's own profile name -- "Default" if none was given or
+  // the one given was invalid.
+  std::string CurrentProfile() const;
+  // Every profile this machine has ever used, alphabetical.
+  std::vector<std::string> ListProfiles() const;
+
+  // All static: none of these need a live WegletState.
+  static bool DeleteProfile(const std::string& name);
+  static bool RenameProfile(const std::string& old_name, const std::string& new_name);
+  static std::string PeekAccentColor(const std::string& name);
+  static std::string LastProfile();
+  static void SetLastProfile(const std::string& name);
 
   // Windows. Every tab question is asked about one.
   std::vector<uint64_t> Windows() const;
   // 0 when the window ceiling is reached.
   uint64_t OpenWindow();
   bool CloseWindow(uint64_t window);
-  // Which window a tab is in. 0 is a real id, so ask about the tab first
-  // to tell it from "no such tab".
+  // Every window is about to close because the browser is quitting: each
+  // stays in the model, so the session keeps all of them.
+  void KeepWindowsOnClose();
+  // Which window a tab is in, or 0 for no such tab.
   uint64_t TabWindow(uint64_t id) const;
 
   // Tabs, within one window. An id is global once you have it.
@@ -134,15 +168,26 @@ class WegletBridge {
   bool ActivateTabAt(uint64_t window, size_t position);
   bool ReorderTab(uint64_t id, size_t target);
 
-  // UrlReplaced is for a redirect: no history entry, so Back skips it.
-  void Navigated(uint64_t id, const GURL& url);
-  void UrlReplaced(uint64_t id, const GURL& url);
+  // The engine's back/forward list for a tab, after it changed. The engine
+  // owns it; the model keeps a copy for the tab strip and the session.
+  // `new_document` is false for a pushState or a fragment change.
+  struct BackForwardList {
+    BackForwardList();
+    BackForwardList(const BackForwardList&);
+    BackForwardList& operator=(const BackForwardList&);
+    ~BackForwardList();
+
+    std::vector<std::string> entries;
+    size_t cursor = 0;
+  };
+  void BackForwardListChanged(uint64_t id,
+                              const BackForwardList& list,
+                              bool new_document);
+  // The model's copy, for a restored tab the engine has not seen yet.
+  BackForwardList TabBackForwardList(uint64_t id) const;
+
   void TitleChanged(uint64_t id, const std::string& title);
   void LoadingChanged(uint64_t id, bool loading);
-
-  // Empty when there is nowhere to go.
-  std::string GoBack(uint64_t id);
-  std::string GoForward(uint64_t id);
 
   // Shortcuts: the pinned sites on the new tab page.
   std::vector<Shortcut> Shortcuts() const;
@@ -191,6 +236,11 @@ class WegletBridge {
   bool FaviconsEnabled() const;
   void SetFaviconsEnabled(bool on);
 
+  // Off by default: most downloads land in Downloads with no prompt. On,
+  // WegletDownloadManagerDelegate shows a Save As dialog for every one.
+  bool AskWhereToSaveDownloads() const;
+  void SetAskWhereToSaveDownloads(bool on);
+
   // `on_done` runs once with whether the fetch+parse succeeded. Only one
   // fetch is ever in flight; a new call replaces the previous one.
   void RefreshThreatFeed(scoped_refptr<network::SharedURLLoaderFactory> factory,
@@ -199,6 +249,17 @@ class WegletBridge {
   // What the user typed, resolved to a URL. Search terms become a search
   // URL for the configured engine.
   std::string ResolveOmnibox(const std::string& input) const;
+
+  struct OmniboxSuggestion {
+    std::string label;
+    std::string url;
+    bool is_bookmark = false;
+  };
+
+  // The address bar's dropdown: bookmarks and history matching `input`,
+  // ranked. Not const -- recomputes and caches the list Rust-side; see
+  // weglet_query_omnibox_suggestions.
+  std::vector<OmniboxSuggestion> QueryOmniboxSuggestions(const std::string& input);
 
   // Advisory: a kWarning may be dismissed, a kBlock may not.
   struct RiskAssessment {

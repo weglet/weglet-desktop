@@ -65,6 +65,8 @@ class WegletStateService : public base::SupportsUserData::Data {
     kTheme = 1 << 7,
     // A find-in-page reply arrived for the tab the find bar is open on.
     kFindResult = 1 << 8,
+    // The address bar's dropdown has new rows or a new highlight.
+    kOmniboxSuggestions = 1 << 9,
   };
 
   // Creates the service and hands it to `browser_context`, which owns it.
@@ -77,6 +79,11 @@ class WegletStateService : public base::SupportsUserData::Data {
   // Null if nothing was created for this context.
   static WegletStateService* FromBrowserContext(
       content::BrowserContext* browser_context);
+
+  // Destroys the service ahead of the context's other user data: it
+  // points at the security guard, which the context also owns, in no
+  // order of its own.
+  static void RemoveFromBrowserContext(content::BrowserContext* browser_context);
 
   WegletStateService(WegletBridge* bridge, WegletSecurityGuard* guard,
                      WegletPermissionDelegate* permission_delegate,
@@ -181,6 +188,22 @@ class WegletStateService : public base::SupportsUserData::Data {
   void SetPendingToasts(content::WebContents* contents, std::vector<PendingToast> toasts);
   void ClearPendingToasts(content::WebContents* contents);
 
+  // The address bar's dropdown: bookmarks and history matching what is
+  // typed, ranked by WegletBridge::QueryOmniboxSuggestions, plus which
+  // one (if any) is highlighted for Enter/arrow-key selection.
+  struct PendingOmniboxSuggestion {
+    std::string label;
+    std::string url;
+    bool is_bookmark = false;
+  };
+  struct PendingOmniboxSuggestions {
+    std::vector<PendingOmniboxSuggestion> items;
+    int highlighted_index = -1;
+  };
+  void SetPendingOmniboxSuggestions(content::WebContents* contents,
+                                    PendingOmniboxSuggestions suggestions);
+  void ClearPendingOmniboxSuggestions(content::WebContents* contents);
+
  private:
   struct Entry {
     // Owned by the WebContents. Removed in RemovePage before it goes.
@@ -211,6 +234,7 @@ class WegletStateService : public base::SupportsUserData::Data {
   std::map<content::WebContents*, PendingFindResult> pending_find_results_;
   std::map<content::WebContents*, PendingPermissionPrompt> pending_permission_prompts_;
   std::map<content::WebContents*, std::vector<PendingToast>> pending_toasts_;
+  std::map<content::WebContents*, PendingOmniboxSuggestions> pending_omnibox_suggestions_;
 
   const raw_ptr<WegletBridge> bridge_;
   const raw_ptr<WegletSecurityGuard> guard_;

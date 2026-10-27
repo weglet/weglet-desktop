@@ -1,15 +1,17 @@
 // Copyright 2026 Weglet - Licensed under Apache 2.0
 //
-// Back/forward history for one tab. The cursor is the only record of
-// where the tab is; the tab keeps no second copy of the URL.
+// Back/forward history for one tab: a copy of the engine's own list, kept
+// for the tab strip and the session. The engine owns the list and does the
+// navigating; this never decides where Back goes. The cursor is the only
+// record of where the tab is; the tab keeps no second copy of the URL.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct History {
     entries: Vec<String>,
     cursor: usize,
 }
 
-// Bounded: every entry is a URL held for the life of the tab, and a page
-// can push entries in a loop.
+// Bounded: every entry is a URL held for the life of the tab, and the list
+// comes in from the engine and from a session file on disk.
 const MAX_ENTRIES: usize = 256;
 
 impl History {
@@ -20,19 +22,32 @@ impl History {
         }
     }
 
-    // Rebuilds from a restored session. The cursor is clamped, not
-    // trusted: it comes off disk, and out of range would panic.
+    // From the engine's list or a restored session. The cursor is clamped,
+    // not trusted: it comes off disk, and out of range would panic. An
+    // empty entry is not a page; it is dropped, and the cursor stays on the
+    // entry it pointed at.
     pub fn from_entries(entries: Vec<String>, cursor: usize) -> Self {
-        let mut history = Self {
-            entries,
-            cursor: 0,
-        };
-        if history.entries.is_empty() {
-            history.entries.push(crate::BLANK_TAB.to_string());
+        let dropped_before_cursor = entries
+            .iter()
+            .take(cursor)
+            .filter(|entry| entry.is_empty())
+            .count();
+        let cursor = cursor - dropped_before_cursor;
+        let mut entries: Vec<String> = entries.into_iter().filter(|entry| !entry.is_empty()).collect();
+        if entries.is_empty() {
+            entries.push(crate::BLANK_TAB.to_string());
         }
-        history.trim();
-        history.cursor = cursor.min(history.entries.len() - 1);
-        history
+        let cursor = cursor.min(entries.len() - 1);
+        // Over the cap, the entries kept are a window that still holds the
+        // current one, oldest dropped first.
+        let excess = entries.len().saturating_sub(MAX_ENTRIES);
+        let start = excess.min(cursor);
+        entries.truncate(start + MAX_ENTRIES);
+        entries.drain(..start);
+        Self {
+            entries,
+            cursor: cursor - start,
+        }
     }
 
     pub fn current(&self) -> &str {
@@ -55,50 +70,6 @@ impl History {
     pub fn can_go_forward(&self) -> bool {
         self.cursor + 1 < self.entries.len()
     }
-
-    // A new navigation drops anything ahead of the cursor.
-    pub fn navigate(&mut self, url: String) {
-        if self.entries[self.cursor] == url {
-            return;
-        }
-        self.entries.truncate(self.cursor + 1);
-        self.entries.push(url);
-        self.trim();
-        self.cursor = self.entries.len() - 1;
-    }
-
-    // Same page, new URL: a redirect or history.replaceState. Adds no
-    // entry.
-    pub fn replace_current(&mut self, url: String) {
-        self.entries[self.cursor] = url;
-    }
-
-    pub fn go_back(&mut self) -> Option<&str> {
-        if !self.can_go_back() {
-            return None;
-        }
-        self.cursor -= 1;
-        Some(self.current())
-    }
-
-    pub fn go_forward(&mut self) -> Option<&str> {
-        if !self.can_go_forward() {
-            return None;
-        }
-        self.cursor += 1;
-        Some(self.current())
-    }
-
-    // Drops the oldest entries and moves the cursor with them, so the
-    // current page stays current.
-    fn trim(&mut self) {
-        if self.entries.len() <= MAX_ENTRIES {
-            return;
-        }
-        let excess = self.entries.len() - MAX_ENTRIES;
-        self.entries.drain(..excess);
-        self.cursor = self.cursor.saturating_sub(excess);
-    }
 }
 
 #[cfg(test)]
@@ -107,6 +78,10 @@ mod tests {
 
     fn at(urls: &[&str], cursor: usize) -> History {
         History::from_entries(urls.iter().map(|s| s.to_string()).collect(), cursor)
+    }
+
+    fn numbered(count: usize) -> Vec<String> {
+        (0..count).map(|i| format!("https://{i}.example")).collect()
     }
 
     #[test]
@@ -118,45 +93,11 @@ mod tests {
     }
 
     #[test]
-    fn navigating_moves_forward_and_enables_back() {
-        let mut history = History::new("https://a.example".into());
-        history.navigate("https://b.example".into());
+    fn back_and_forward_follow_the_cursor() {
+        let history = at(&["https://a.example", "https://b.example", "https://c.example"], 1);
         assert_eq!(history.current(), "https://b.example");
         assert!(history.can_go_back());
-        assert!(!history.can_go_forward());
-    }
-
-    #[test]
-    fn back_and_forward_walk_the_entries() {
-        let mut history = at(&["https://a.example", "https://b.example"], 1);
-        assert_eq!(history.go_back(), Some("https://a.example"));
-        assert_eq!(history.go_forward(), Some("https://b.example"));
-        assert_eq!(history.go_forward(), None);
-    }
-
-    #[test]
-    fn navigating_after_going_back_drops_the_forward_branch() {
-        let mut history = at(&["https://a.example", "https://b.example"], 0);
-        history.navigate("https://c.example".into());
-        assert_eq!(history.entries(), ["https://a.example", "https://c.example"]);
-        assert!(!history.can_go_forward());
-    }
-
-    #[test]
-    fn navigating_to_the_same_url_changes_nothing() {
-        let mut history = History::new("https://a.example".into());
-        history.navigate("https://a.example".into());
-        assert_eq!(history.entries().len(), 1);
-    }
-
-    // A redirect must not add an entry, or Back lands on the page that
-    // redirected.
-    #[test]
-    fn replacing_the_current_entry_does_not_grow_the_history() {
-        let mut history = History::new("https://a.example".into());
-        history.replace_current("https://a.example/final".into());
-        assert_eq!(history.entries(), ["https://a.example/final"]);
-        assert!(!history.can_go_back());
+        assert!(history.can_go_forward());
     }
 
     #[test]
@@ -166,35 +107,30 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_restored_history_becomes_a_blank_tab() {
+    fn an_empty_entry_is_dropped_and_the_cursor_stays_on_its_page() {
+        let history = at(&["https://a.example", "", "https://c.example"], 2);
+        assert_eq!(history.entries(), ["https://a.example", "https://c.example"]);
+        assert_eq!(history.current(), "https://c.example");
+    }
+
+    #[test]
+    fn an_empty_list_becomes_a_blank_tab() {
         let history = History::from_entries(Vec::new(), 0);
         assert_eq!(history.current(), crate::BLANK_TAB);
     }
 
     #[test]
-    fn the_entry_count_is_bounded() {
-        let mut history = History::new("https://0.example".into());
-        for i in 1..MAX_ENTRIES + 50 {
-            history.navigate(format!("https://{i}.example"));
-        }
+    fn a_list_longer_than_the_cap_keeps_the_newest_entries() {
+        let history = History::from_entries(numbered(MAX_ENTRIES + 10), MAX_ENTRIES + 9);
         assert_eq!(history.entries().len(), MAX_ENTRIES);
-        // Still on the page it last navigated to.
-        assert_eq!(
-            history.current(),
-            format!("https://{}.example", MAX_ENTRIES + 49)
-        );
+        assert_eq!(history.entries()[0], "https://10.example");
+        assert_eq!(history.current(), format!("https://{}.example", MAX_ENTRIES + 9));
     }
 
     #[test]
-    fn a_restored_history_longer_than_the_cap_is_trimmed() {
-        let urls: Vec<String> = (0..MAX_ENTRIES + 10)
-            .map(|i| format!("https://{i}.example"))
-            .collect();
-        let history = History::from_entries(urls, MAX_ENTRIES + 9);
+    fn a_list_longer_than_the_cap_keeps_an_early_current_entry() {
+        let history = History::from_entries(numbered(MAX_ENTRIES + 10), 3);
         assert_eq!(history.entries().len(), MAX_ENTRIES);
-        assert_eq!(
-            history.current(),
-            format!("https://{}.example", MAX_ENTRIES + 9)
-        );
+        assert_eq!(history.current(), "https://3.example");
     }
 }

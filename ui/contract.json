@@ -21,7 +21,8 @@
     "find-bar": "find_bar.html",
     "permission-prompt": "permission_prompt.html",
     "site-info": "site_info.html",
-    "toast": "toast.html"
+    "toast": "toast.html",
+    "omnibox-suggestions": "omnibox_suggestions.html"
   },
   "$messages_comment": [
     "args is what the page sends, in order, in TypeScript types; C++",
@@ -269,6 +270,49 @@
       "implemented": true
     },
     {
+      "name": "setAskWhereToSaveDownloads",
+      "args": [
+        "boolean"
+      ],
+      "implemented": true
+    },
+    {
+      "name": "switchProfile",
+      "args": [
+        "string"
+      ],
+      "implemented": true
+    },
+    {
+      "name": "renameProfile",
+      "args": [
+        "string",
+        "string"
+      ],
+      "implemented": true
+    },
+    {
+      "name": "deleteProfile",
+      "args": [
+        "string"
+      ],
+      "implemented": true
+    },
+    {
+      "name": "openProfileWindow",
+      "args": [
+        "string"
+      ],
+      "implemented": true
+    },
+    {
+      "name": "createProfileShortcut",
+      "args": [
+        "string"
+      ],
+      "implemented": true
+    },
+    {
       "name": "refreshThreatFeed",
       "args": [],
       "implemented": true
@@ -348,6 +392,37 @@
         "number"
       ],
       "implemented": true
+    },
+    {
+      "name": "queryOmniboxSuggestions",
+      "args": [
+        "string",
+        "number",
+        "number"
+      ],
+      "implemented": true
+    },
+    {
+      "name": "hideOmniboxSuggestions",
+      "args": [],
+      "implemented": true
+    },
+    {
+      "name": "moveOmniboxHighlightNext",
+      "args": [],
+      "implemented": true
+    },
+    {
+      "name": "moveOmniboxHighlightPrevious",
+      "args": [],
+      "implemented": true
+    },
+    {
+      "name": "acceptOmniboxSuggestion",
+      "args": [
+        "number"
+      ],
+      "implemented": true
     }
   ],
   "$pushes_comment": [
@@ -412,6 +487,10 @@
     "toast": {
       "page": "toast",
       "function": "setToast"
+    },
+    "omniboxSuggestions": {
+      "page": "omnibox-suggestions",
+      "function": "setOmniboxSuggestions"
     }
   },
   "internal_addresses": {

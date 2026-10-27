@@ -44,20 +44,23 @@ const MAX_TABS: usize = 100;
 // on top of its tabs.
 const MAX_WINDOWS: usize = 20;
 
+// Ids start at 1 because 0 crosses the FFI as "no such tab or window".
+const FIRST_ID: u64 = 1;
+
 impl AppState {
     // Always starts with one window holding one tab: a browser with no
     // window has no valid representation on screen.
     pub fn new() -> Self {
-        let window = WindowId::new(0);
-        let tab = TabId::new(0);
+        let window = WindowId::new(FIRST_ID);
+        let tab = TabId::new(FIRST_ID);
         Self {
             tabs: vec![Tab::new(tab, window, BLANK_TAB.to_string())],
             windows: vec![Window {
                 id: window,
                 active: tab,
             }],
-            next_tab: 1,
-            next_window: 1,
+            next_tab: FIRST_ID + 1,
+            next_window: FIRST_ID + 1,
         }
     }
 
@@ -68,8 +71,8 @@ impl AppState {
         let mut state = Self {
             tabs: Vec::new(),
             windows: Vec::new(),
-            next_tab: 0,
-            next_window: 0,
+            next_tab: FIRST_ID,
+            next_window: FIRST_ID,
         };
 
         for (tabs, active_index) in windows.into_iter().take(MAX_WINDOWS) {
@@ -177,29 +180,19 @@ impl AppState {
         Some(window)
     }
 
-    // True if the window existed. Its tabs go with it. Closing the last
-    // window leaves a fresh one.
+    // True if the window existed. Its tabs go with it -- except for the last
+    // window, which stays with all of its tabs: that is what the session
+    // restores, and what showing the profile again brings back. A state
+    // with no window has no valid representation on screen.
     pub fn close_window(&mut self, window: WindowId) -> bool {
         if self.window(window).is_none() {
             return false;
         }
+        if self.windows.len() == 1 {
+            return true;
+        }
         self.tabs.retain(|tab| tab.window != window);
         self.windows.retain(|other| other.id != window);
-        if self.windows.is_empty() {
-            let fresh = Self::new();
-            self.tabs = fresh.tabs;
-            self.windows = fresh.windows;
-            // Ids are not reused: the C++ side may still hold one.
-            let window = WindowId::new(self.next_window);
-            self.next_window += 1;
-            let tab = TabId::new(self.next_tab);
-            self.next_tab += 1;
-            self.tabs = vec![Tab::new(tab, window, BLANK_TAB.to_string())];
-            self.windows = vec![Window {
-                id: window,
-                active: tab,
-            }];
-        }
         true
     }
 
@@ -367,6 +360,16 @@ mod tests {
 
     fn urls(state: &AppState, window: WindowId) -> Vec<&str> {
         state.tabs_in(window).map(|tab| tab.url()).collect()
+    }
+
+    #[test]
+    fn no_tab_or_window_has_id_zero() {
+        let fresh = AppState::new();
+        let restored = AppState::restore(vec![(vec![(vec!["https://a.example".into()], 0)], 0)]);
+        for state in [fresh, restored] {
+            assert!(state.tabs().iter().all(|tab| tab.id.value() != 0));
+            assert!(state.windows().iter().all(|window| window.id.value() != 0));
+        }
     }
 
     #[test]
@@ -576,13 +579,14 @@ mod tests {
     }
 
     #[test]
-    fn closing_the_last_window_leaves_a_fresh_one() {
+    fn closing_the_last_window_keeps_it_and_its_tabs() {
         let mut state = AppState::new();
         let only = only_window(&state);
+        state.open_tab(only, "https://a.example").unwrap();
         assert!(state.close_window(only));
         assert_eq!(state.windows().len(), 1);
-        assert_ne!(state.windows()[0].id, only);
-        assert_eq!(state.tabs().len(), 1);
+        assert_eq!(state.windows()[0].id, only);
+        assert_eq!(urls(&state, only), [BLANK_TAB, "https://a.example"]);
     }
 
     #[test]

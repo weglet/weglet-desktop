@@ -8,7 +8,7 @@
 #include <memory>
 #include <string>
 
-#include "base/memory/raw_ptr.h"
+#include "base/memory/weak_ptr.h"
 #include "components/spellcheck/common/spellcheck.mojom-forward.h"
 #include "content/public/browser/content_browser_client.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
@@ -26,7 +26,9 @@ class WegletContentBrowserClient : public content::ContentBrowserClient {
       delete;
   ~WegletContentBrowserClient() override;
 
-  WegletBrowserMainParts* browser_main_parts() { return browser_main_parts_; }
+  WegletBrowserMainParts* browser_main_parts() {
+    return browser_main_parts_.get();
+  }
 
   // content::ContentBrowserClient:
   std::unique_ptr<content::BrowserMainParts> CreateBrowserMainParts(
@@ -41,11 +43,6 @@ class WegletContentBrowserClient : public content::ContentBrowserClient {
   void CreateThrottlesForNavigation(
       content::NavigationThrottleRegistry& registry) override;
 
-  // Serves the DevTools front-end's own resources -- see
-  // WegletDevToolsManagerDelegate.
-  std::unique_ptr<content::DevToolsManagerDelegate>
-  CreateDevToolsManagerDelegate() override;
-
   // Binds spellcheck::mojom::SpellCheckHost -- see WegletSpellCheckHost.
   void RegisterBrowserInterfaceBindersForFrame(
       content::RenderFrameHost* render_frame_host,
@@ -59,8 +56,8 @@ class WegletContentBrowserClient : public content::ContentBrowserClient {
       content::RenderFrameHost* frame_host,
       mojo::PendingReceiver<spellcheck::mojom::SpellCheckHost> receiver);
 
-  // Owned by the content layer, which outlives this client.
-  raw_ptr<WegletBrowserMainParts> browser_main_parts_ = nullptr;
+  // Owned by the content layer, which destroys it before this client.
+  base::WeakPtr<WegletBrowserMainParts> browser_main_parts_;
 };
 
 }  // namespace weglet

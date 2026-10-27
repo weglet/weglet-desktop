@@ -539,6 +539,9 @@ function main(): void {
     if (key === "Enter") {
       const text = address.value.trim();
       if (text) {
+        // The browser accepts whichever row is highlighted (if any)
+        // instead of re-resolving this text -- see
+        // WegletWindow::NavigateActiveTabFromOmnibox.
         send("navigate", text);
         // Focus moves to the page. Leaving it here sends the next
         // keystroke to the wrong place and stops render updating the
@@ -547,8 +550,32 @@ function main(): void {
       }
     } else if (key === "Escape") {
       address.blur();
+      send("hideOmniboxSuggestions");
       send("requestState");
+    } else if (key === "ArrowDown") {
+      event.preventDefault();
+      send("moveOmniboxHighlightNext");
+    } else if (key === "ArrowUp") {
+      event.preventDefault();
+      send("moveOmniboxHighlightPrevious");
     }
+  });
+  address.addEventListener("input", () => {
+    const text = address.value.trim();
+    if (!text) {
+      send("hideOmniboxSuggestions");
+      return;
+    }
+    const rect = address.getBoundingClientRect();
+    send(
+      "queryOmniboxSuggestions",
+      text,
+      Math.round(rect.left),
+      Math.round(rect.bottom),
+    );
+  });
+  address.addEventListener("blur", () => {
+    send("hideOmniboxSuggestions");
   });
 
   register(buttonStrip, () => buttons.length, renderButtons);

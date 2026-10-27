@@ -30,9 +30,7 @@ class WMState;
 
 namespace weglet {
 
-class WegletBridge;
-class WegletBrowserContext;
-class WegletDownloadObserver;
+class WegletProfileManager;
 
 // Runs once, in the browser process. Opens the profile and the first
 // window.
@@ -41,10 +39,13 @@ class WegletBrowserMainParts : public content::BrowserMainParts {
   WegletBrowserMainParts();
   WegletBrowserMainParts(const WegletBrowserMainParts&) = delete;
   WegletBrowserMainParts& operator=(const WegletBrowserMainParts&) = delete;
+
+  // For a holder that can outlive this: the content browser client.
+  base::WeakPtr<WegletBrowserMainParts> GetWeakPtr() {
+    return weak_factory_.GetWeakPtr();
+  }
   ~WegletBrowserMainParts() override;
 
-  WegletBrowserContext* browser_context() { return browser_context_.get(); }
-  WegletBridge* bridge() { return bridge_.get(); }
   WindowsSpellChecker* spell_checker() { return spell_checker_.get(); }
 
   // content::BrowserMainParts:
@@ -54,14 +55,9 @@ class WegletBrowserMainParts : public content::BrowserMainParts {
   void PostMainMessageLoopRun() override;
 
  private:
-  std::unique_ptr<WegletBrowserContext> browser_context_;
-
-  // The browser's own model, in Rust. Created before the window that
-  // reads it, destroyed after.
-  std::unique_ptr<WegletBridge> bridge_;
-
-  // Forwards content::DownloadManager's real downloads into the profile.
-  std::unique_ptr<WegletDownloadObserver> download_observer_;
+  // Every profile with a window open in this process -- almost always
+  // just the one it launched into. Outlives every WegletWindow.
+  std::unique_ptr<WegletProfileManager> profile_manager_;
 
   // Wraps the Windows native spellchecker (ISpellCheckerFactory), so
   // WegletSpellCheckHost::RequestTextCheck has something to call into.
@@ -81,6 +77,17 @@ class WegletBrowserMainParts : public content::BrowserMainParts {
   void FlushSettings();
   void SaveSession();
   void OnSpellcheckLanguagesRetrieved(const std::vector<std::string>& lang_tags);
+
+  // Relaunches this executable pointed at a different profile, flushing
+  // this one's own pending writes first, then closes every window --
+  // which quits this instance once the last one does. A name
+  // WegletBridge::IsValidProfileName rejects is a no-op.
+  void SwitchToProfile(const std::string& requested_name);
+
+  // Opens a window into `requested_name`, building its context and bridge
+  // first if no window has used it yet this run. A profile with no window
+  // open shows the windows its model kept instead of a new blank one.
+  void OpenProfileWindow(const std::string& requested_name);
 
 #if defined(USE_AURA)
   // Aura needs all three before any Widget is created, and they outlive

@@ -6,6 +6,7 @@
 
 #include "base/check.h"
 #include "base/functional/bind.h"
+#include "base/strings/string_util.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "services/network/public/cpp/resource_request.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
@@ -67,9 +68,65 @@ WegletBridge::WegletBridge() : state_(weglet_state_new()) {
   CHECK(state_) << "could not create the Weglet state";
 }
 
+WegletBridge::WegletBridge(const std::string& profile)
+    : state_(weglet_state_new_for_profile(profile.c_str())) {
+  CHECK(state_) << "could not create the Weglet state";
+}
+
 WegletBridge::~WegletBridge() {
   weglet_state_free(state_);
   state_ = nullptr;
+}
+
+// static
+bool WegletBridge::IsValidProfileName(const std::string& name) {
+  return weglet_is_valid_profile_name(name.c_str());
+}
+
+// static
+std::string WegletBridge::CanonicalProfileName(const std::string& name) {
+  return TakeString(weglet_canonical_profile_name(name.c_str()));
+}
+
+std::string WegletBridge::CurrentProfile() const {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  return TakeString(weglet_current_profile(state_));
+}
+
+// static
+bool WegletBridge::DeleteProfile(const std::string& name) {
+  return weglet_delete_profile(name.c_str());
+}
+
+// static
+bool WegletBridge::RenameProfile(const std::string& old_name, const std::string& new_name) {
+  return weglet_rename_profile(old_name.c_str(), new_name.c_str());
+}
+
+// static
+std::string WegletBridge::PeekAccentColor(const std::string& name) {
+  return TakeString(weglet_profile_accent_color(name.c_str()));
+}
+
+// static
+std::string WegletBridge::LastProfile() {
+  return TakeString(weglet_last_profile());
+}
+
+// static
+void WegletBridge::SetLastProfile(const std::string& name) {
+  weglet_set_last_profile(name.c_str());
+}
+
+std::vector<std::string> WegletBridge::ListProfiles() const {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  const size_t count = weglet_profile_count();
+  std::vector<std::string> profiles;
+  profiles.reserve(count);
+  for (size_t index = 0; index < count; ++index) {
+    profiles.push_back(TakeString(weglet_profile_name_at(index)));
+  }
+  return profiles;
 }
 
 // static
@@ -101,6 +158,11 @@ uint64_t WegletBridge::OpenWindow() {
 bool WegletBridge::CloseWindow(uint64_t window) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   return weglet_close_window(state_, window);
+}
+
+void WegletBridge::KeepWindowsOnClose() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  weglet_keep_windows_on_close(state_);
 }
 
 uint64_t WegletBridge::TabWindow(uint64_t id) const {
@@ -167,14 +229,37 @@ bool WegletBridge::ReorderTab(uint64_t id, size_t target) {
   return weglet_reorder_tab(state_, id, target);
 }
 
-void WegletBridge::Navigated(uint64_t id, const GURL& url) {
+WegletBridge::BackForwardList::BackForwardList() = default;
+WegletBridge::BackForwardList::BackForwardList(const BackForwardList&) = default;
+WegletBridge::BackForwardList& WegletBridge::BackForwardList::operator=(
+    const BackForwardList&) = default;
+WegletBridge::BackForwardList::~BackForwardList() = default;
+
+// The separator weglet_ffi.h gives for a back/forward list.
+constexpr char kBackForwardSeparator[] = "\n";
+
+void WegletBridge::BackForwardListChanged(uint64_t id,
+                                          const BackForwardList& list,
+                                          bool new_document) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  weglet_tab_navigated(state_, id, url.spec().c_str());
+  const std::string entries =
+      base::JoinString(list.entries, kBackForwardSeparator);
+  weglet_tab_history_changed(state_, id, entries.c_str(), list.cursor,
+                             new_document);
 }
 
-void WegletBridge::UrlReplaced(uint64_t id, const GURL& url) {
+WegletBridge::BackForwardList WegletBridge::TabBackForwardList(
+    uint64_t id) const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  weglet_tab_url_replaced(state_, id, url.spec().c_str());
+  BackForwardList list;
+  const size_t count = weglet_tab_history_count(state_, id);
+  list.entries.reserve(count);
+  for (size_t index = 0; index < count; ++index) {
+    list.entries.push_back(
+        TakeString(weglet_tab_history_entry_at(state_, id, index)));
+  }
+  list.cursor = weglet_tab_history_cursor(state_, id);
+  return list;
 }
 
 void WegletBridge::TitleChanged(uint64_t id, const std::string& title) {
@@ -185,16 +270,6 @@ void WegletBridge::TitleChanged(uint64_t id, const std::string& title) {
 void WegletBridge::LoadingChanged(uint64_t id, bool loading) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   weglet_tab_loading_changed(state_, id, loading);
-}
-
-std::string WegletBridge::GoBack(uint64_t id) {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  return TakeString(weglet_tab_go_back(state_, id));
-}
-
-std::string WegletBridge::GoForward(uint64_t id) {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  return TakeString(weglet_tab_go_forward(state_, id));
 }
 
 std::vector<WegletBridge::Shortcut> WegletBridge::Shortcuts() const {
@@ -352,6 +427,16 @@ void WegletBridge::SetFaviconsEnabled(bool on) {
   weglet_set_favicons_enabled(state_, on);
 }
 
+bool WegletBridge::AskWhereToSaveDownloads() const {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  return weglet_ask_where_to_save_downloads(state_);
+}
+
+void WegletBridge::SetAskWhereToSaveDownloads(bool on) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  weglet_set_ask_where_to_save_downloads(state_, on);
+}
+
 bool WegletBridge::ApplyThreatFeed(const std::string& body) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   return weglet_apply_threat_feed(state_, body.c_str());
@@ -422,6 +507,22 @@ std::string WegletBridge::ResolveOmnibox(const std::string& input) const {
   return TakeString(weglet_omnibox_resolve(state_, input.c_str()));
 }
 
+std::vector<WegletBridge::OmniboxSuggestion> WegletBridge::QueryOmniboxSuggestions(
+    const std::string& input) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  const size_t count = weglet_query_omnibox_suggestions(state_, input.c_str());
+  std::vector<OmniboxSuggestion> suggestions;
+  suggestions.reserve(count);
+  for (size_t index = 0; index < count; ++index) {
+    suggestions.push_back({
+        TakeString(weglet_omnibox_suggestion_label_at(state_, index)),
+        TakeString(weglet_omnibox_suggestion_url_at(state_, index)),
+        weglet_omnibox_suggestion_is_bookmark_at(state_, index),
+    });
+  }
+  return suggestions;
+}
+
 namespace {
 
 // weglet_assess_navigation's return codes. Unrecognised = "nothing to
@@ -488,6 +589,7 @@ WegletBridge::SettingsSnapshot WegletBridge::Settings() const {
   snapshot.restore_session = weglet_restore_session(state_);
   snapshot.accent_color = TakeString(weglet_accent_color(state_));
   snapshot.address_bar_shape = TakeString(weglet_address_bar_shape(state_));
+  snapshot.ask_where_to_save_downloads = weglet_ask_where_to_save_downloads(state_);
 
   const size_t blocked_count = weglet_blocked_host_count(state_);
   snapshot.blocked_hosts.reserve(blocked_count);
@@ -500,6 +602,17 @@ WegletBridge::SettingsSnapshot WegletBridge::Settings() const {
   snapshot.threat_feed_updated_at = weglet_threat_feed_updated_at(state_);
   snapshot.threat_feed_last_update_failed =
       weglet_threat_feed_last_update_failed(state_);
+
+  snapshot.active_profile = TakeString(weglet_current_profile(state_));
+  const size_t profile_count = weglet_profile_count();
+  snapshot.profiles.reserve(profile_count);
+  snapshot.profile_colors.reserve(profile_count);
+  for (size_t index = 0; index < profile_count; ++index) {
+    std::string name = TakeString(weglet_profile_name_at(index));
+    snapshot.profile_colors.push_back(
+        name == snapshot.active_profile ? snapshot.accent_color : PeekAccentColor(name));
+    snapshot.profiles.push_back(std::move(name));
+  }
 
   return snapshot;
 }

@@ -101,6 +101,12 @@ export interface SettingsState {
   readonly threatFeedLastUpdateFailed: boolean;
   readonly language: Language;
   readonly faviconsEnabled: boolean;
+  readonly askWhereToSaveDownloads: boolean;
+  // Every profile this machine has ever used, alphabetical.
+  readonly profiles: readonly string[];
+  // Parallel to `profiles`.
+  readonly profileColors: readonly string[];
+  readonly activeProfile: string;
 }
 
 export interface RiskNotice {
@@ -162,6 +168,21 @@ export interface ToastItem {
 
 export interface ToastState {
   readonly items: readonly ToastItem[];
+  readonly language: Language;
+  readonly accentColor: string;
+  readonly addressBarShape: AddressBarShape;
+}
+
+export interface OmniboxSuggestionItem {
+  readonly label: string;
+  readonly url: string;
+  readonly isBookmark: boolean;
+}
+
+export interface OmniboxSuggestionsState {
+  readonly items: readonly OmniboxSuggestionItem[];
+  // -1 when nothing is highlighted.
+  readonly highlightedIndex: number;
   readonly language: Language;
   readonly accentColor: string;
   readonly addressBarShape: AddressBarShape;
@@ -390,7 +411,11 @@ function parseSettings(value: unknown): SettingsState | null {
     !Array.isArray(s.blockedHosts) ||
     typeof s.threatFeedEnabled !== "boolean" ||
     typeof s.threatFeedUpdatedAt !== "number" ||
-    typeof s.threatFeedLastUpdateFailed !== "boolean"
+    typeof s.threatFeedLastUpdateFailed !== "boolean" ||
+    typeof s.askWhereToSaveDownloads !== "boolean" ||
+    !Array.isArray(s.profiles) ||
+    !Array.isArray(s.profileColors) ||
+    typeof s.activeProfile !== "string"
   ) {
     console.warn("weglet: malformed settings", value);
     return null;
@@ -408,6 +433,10 @@ function parseSettings(value: unknown): SettingsState | null {
     threatFeedEnabled: s.threatFeedEnabled,
     threatFeedUpdatedAt: s.threatFeedUpdatedAt,
     threatFeedLastUpdateFailed: s.threatFeedLastUpdateFailed,
+    askWhereToSaveDownloads: s.askWhereToSaveDownloads,
+    profiles: s.profiles.filter((name): name is string => typeof name === "string"),
+    profileColors: s.profileColors.filter((color): color is string => typeof color === "string"),
+    activeProfile: s.activeProfile,
     language: parseLanguage(value),
     faviconsEnabled: parseFaviconsEnabled(value),
   };
@@ -629,6 +658,55 @@ function parseToast(value: unknown): ToastState | null {
   }
   return {
     items,
+    language: parseLanguage(value),
+    accentColor: parsePushedAccentColor(value),
+    addressBarShape: parsePushedAddressBarShape(value),
+  };
+}
+
+// The address bar's dropdown: bookmarks and history matching what is
+// typed, reloaded fresh on every keystroke -- see toast.ts's own comment
+// on why a popup like this reloads rather than diffing.
+export function onOmniboxSuggestions(
+  handler: (state: OmniboxSuggestionsState) => void,
+): void {
+  install(pushes.omniboxSuggestions, (value: unknown) => {
+    const parsed = parseOmniboxSuggestions(value);
+    if (parsed) {
+      handler(parsed);
+    }
+  });
+  send("requestState");
+}
+
+function parseOmniboxSuggestions(value: unknown): OmniboxSuggestionsState | null {
+  if (typeof value !== "object" || value === null) {
+    return null;
+  }
+  const state = value as { items?: unknown; highlightedIndex?: unknown };
+  if (!Array.isArray(state.items) || typeof state.highlightedIndex !== "number") {
+    console.warn("weglet: malformed omnibox suggestions state", value);
+    return null;
+  }
+  const items: OmniboxSuggestionItem[] = [];
+  for (const entry of state.items) {
+    if (typeof entry !== "object" || entry === null) {
+      return null;
+    }
+    const item = entry as Record<string, unknown>;
+    if (
+      typeof item.label !== "string" ||
+      typeof item.url !== "string" ||
+      typeof item.isBookmark !== "boolean"
+    ) {
+      console.warn("weglet: malformed omnibox suggestion", entry);
+      return null;
+    }
+    items.push({ label: item.label, url: item.url, isBookmark: item.isBookmark });
+  }
+  return {
+    items,
+    highlightedIndex: state.highlightedIndex,
     language: parseLanguage(value),
     accentColor: parsePushedAccentColor(value),
     addressBarShape: parsePushedAddressBarShape(value),

@@ -356,6 +356,42 @@ body {
   padding: var(--space-sm) 0;
 }
 
+.profile-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.profile-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: var(--radius-md);
+  padding: var(--space-sm) var(--space-lg);
+}
+
+.profile-swatch {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.profile-name-btn {
+  flex: 1;
+  text-align: left;
+  background: none;
+  border: 0;
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+.profile-name-btn.active {
+  font-weight: var(--font-weight-bold);
+}
+
 /* Outlined in the danger colour, never filled: it is the one control here
    whose result cannot be undone. */
 .clear-data-btn {

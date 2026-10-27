@@ -5,18 +5,23 @@
 #include "weglet/browser/weglet_window.h"
 
 #include <algorithm>
+#include <optional>
 #include <string_view>
 #include <utility>
 #include <vector>
 
+#include "base/base_paths.h"
+#include "base/command_line.h"
 #include "base/functional/bind.h"
 #include "base/logging.h"
 #include "base/no_destructor.h"
+#include "base/path_service.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/single_thread_task_runner.h"
+#include "base/task/thread_pool.h"
 #include "base/values.h"
+#include "base/win/shortcut.h"
 #include "build/build_config.h"
 #include "components/spellcheck/browser/windows_spell_checker.h"
 #include "components/spellcheck/common/spellcheck_common.h"
@@ -25,6 +30,8 @@
 #include "content/public/browser/context_menu_params.h"
 #include "content/public/browser/media_capture_devices.h"
 #include "content/public/browser/navigation_controller.h"
+#include "content/public/browser/navigation_entry.h"
+#include "content/public/browser/restore_type.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_widget_host.h"
 #include "content/public/browser/render_widget_host_view.h"
@@ -33,6 +40,8 @@
 #include "content/public/common/url_constants.h"
 #include "content/public/browser/web_contents_user_data.h"
 #include "content/public/browser/web_ui.h"
+#include "content/public/common/referrer.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "third_party/blink/public/mojom/frame/find_in_page.mojom.h"
 #include "third_party/blink/public/mojom/mediastream/media_stream.mojom.h"
 #include "third_party/blink/public/mojom/page/draggable_region.mojom.h"
@@ -53,7 +62,7 @@
 #include "weglet/browser/weglet_bridge.h"
 #include "weglet/browser/weglet_context_menu.h"
 #include "weglet/browser/weglet_devtools_bindings.h"
-#include "weglet/browser/weglet_devtools_manager_delegate.h"
+#include "weglet/browser/weglet_devtools_ui.h"
 #include "weglet/browser/weglet_file_select_helper.h"
 #include "weglet/browser/weglet_find_bar.h"
 #include "weglet/browser/weglet_frame_view.h"
@@ -65,6 +74,7 @@
 #include "weglet/browser/weglet_shortcut_popup.h"
 #include "weglet/browser/weglet_state_service.h"
 #include "weglet/browser/weglet_tab_observer.h"
+#include "weglet/browser/weglet_omnibox_suggestions_popup.h"
 #include "weglet/browser/weglet_toast_popup.h"
 #include "weglet/common/weglet_host.h"
 #include "weglet/ui/generated_contract.h"
@@ -76,6 +86,28 @@ namespace {
 base::OnceClosure& QuitClosure() {
   static base::NoDestructor<base::OnceClosure> quit;
   return *quit;
+}
+
+base::RepeatingCallback<void(const std::string&)>& ProfileSwitchHandler() {
+  static base::NoDestructor<base::RepeatingCallback<void(const std::string&)>> handler;
+  return *handler;
+}
+
+base::RepeatingCallback<void(const std::string&)>& OpenProfileWindowHandler() {
+  static base::NoDestructor<base::RepeatingCallback<void(const std::string&)>> handler;
+  return *handler;
+}
+
+base::RepeatingCallback<bool(const std::string&)>& ProfileInUseCheck() {
+  static base::NoDestructor<base::RepeatingCallback<bool(const std::string&)>> check;
+  return *check;
+}
+
+// Every live window, in creation order. Used only by CloseAllWindows --
+// see RequestProfileSwitch.
+std::vector<WegletWindow*>& AllWindowsRegistry() {
+  static base::NoDestructor<std::vector<WegletWindow*>> windows;
+  return *windows;
 }
 
 // Attaches a window to each of its WebContents so the WebUI factory can find
@@ -126,6 +158,107 @@ void WegletWindow::QuitIfLastWindow() {
 }
 
 // static
+void WegletWindow::CloseAllWindows() {
+  // Copied first: each CloseWindow() is asynchronous (views::Widget::Close
+  // posts the real teardown), so this never mutates the registry it is
+  // iterating.
+  const std::vector<WegletWindow*> windows = AllWindowsRegistry();
+  for (WegletWindow* window : windows) {
+    window->CloseWindow();
+  }
+}
+
+// static
+void WegletWindow::SetProfileSwitchHandler(
+    base::RepeatingCallback<void(const std::string&)> handler) {
+  ProfileSwitchHandler() = std::move(handler);
+}
+
+namespace {
+
+bool CreateProfileShortcutBlocking(const std::string& profile_name) {
+  if (!WegletBridge::IsValidProfileName(profile_name)) {
+    return false;
+  }
+  base::FilePath desktop;
+  if (!base::PathService::Get(base::DIR_USER_DESKTOP, &desktop)) {
+    return false;
+  }
+  const base::FilePath exe = base::CommandLine::ForCurrentProcess()->GetProgram();
+
+  base::CommandLine shortcut_args(exe);
+  shortcut_args.AppendSwitchUTF8("profile", profile_name);
+
+  base::win::ShortcutProperties properties;
+  properties.set_target(exe);
+  properties.set_working_dir(exe.DirName());
+  properties.set_arguments(shortcut_args.GetArgumentsString());
+  properties.set_description(base::UTF8ToWide("Weglet — " + profile_name));
+
+  const base::FilePath shortcut_path =
+      desktop.Append(base::FilePath::FromUTF8Unsafe("Weglet - " + profile_name + ".lnk"));
+  return base::win::CreateOrUpdateShortcutLink(
+      shortcut_path, properties, base::win::ShortcutOperation::kCreateAlways);
+}
+
+}  // namespace
+
+void WegletWindow::CreateProfileShortcut(const std::string& profile_name) {
+  base::ThreadPool::CreateCOMSTATaskRunner({base::MayBlock()})
+      ->PostTaskAndReplyWithResult(
+          FROM_HERE, base::BindOnce(&CreateProfileShortcutBlocking, profile_name),
+          base::BindOnce(
+              [](base::WeakPtr<WegletWindow> window, bool ok) {
+                if (window) {
+                  window->ShowToast(ok ? "toast.shortcutCreated" : "toast.shortcutFailed");
+                }
+              },
+              weak_factory_.GetWeakPtr()));
+}
+
+void WegletWindow::RequestProfileSwitch(const std::string& profile_name) {
+  for (const WegletBridge::DownloadEntry& download : bridge_->Downloads()) {
+    if (download.status == 0) {
+      ShowToast("toast.downloadsInProgress");
+      return;
+    }
+  }
+  if (ProfileSwitchHandler()) {
+    ProfileSwitchHandler().Run(profile_name);
+  }
+}
+
+// static
+void WegletWindow::SetOpenProfileWindowHandler(
+    base::RepeatingCallback<void(const std::string&)> handler) {
+  OpenProfileWindowHandler() = std::move(handler);
+}
+
+void WegletWindow::RequestOpenProfileWindow(const std::string& profile_name) {
+  if (OpenProfileWindowHandler()) {
+    OpenProfileWindowHandler().Run(profile_name);
+  }
+}
+
+// static
+void WegletWindow::SetProfileInUseCheck(
+    base::RepeatingCallback<bool(const std::string&)> check) {
+  ProfileInUseCheck() = std::move(check);
+}
+
+// static
+bool WegletWindow::IsProfileInUse(const std::string& profile_name) {
+  return ProfileInUseCheck() && ProfileInUseCheck().Run(profile_name);
+}
+
+// static
+bool WegletWindow::HasWindowFor(const WegletBridge* bridge) {
+  return std::ranges::any_of(AllWindowsRegistry(), [bridge](WegletWindow* window) {
+    return window->bridge_ == bridge;
+  });
+}
+
+// static
 WegletWindow* WegletWindow::FromWebContents(content::WebContents* contents) {
   if (!contents) {
     return nullptr;
@@ -166,10 +299,12 @@ WegletWindow::WegletWindow(content::BrowserContext* browser_context,
       security_guard_(
           WegletSecurityGuard::FromBrowserContext(browser_context)) {
   ++window_count_;
+  AllWindowsRegistry().push_back(this);
 }
 
 WegletWindow::~WegletWindow() {
   --window_count_;
+  std::erase(AllWindowsRegistry(), this);
 
   // Parented to widget_ -- torn down before it, not by relying on
   // declaration order alone.
@@ -180,6 +315,7 @@ WegletWindow::~WegletWindow() {
   permission_prompt_.reset();
   site_info_popup_.reset();
   toast_popup_.reset();
+  omnibox_suggestions_popup_.reset();
 
   // The WebViews hold bare pointers to their contents. Detach while the
   // views are alive, drop the widget, then drop the contents.
@@ -192,6 +328,7 @@ WegletWindow::~WegletWindow() {
     page_view_ = nullptr;
   }
   contents_view_ = nullptr;
+  frame_view_ = nullptr;
   widget_.reset();
 
   // Observers before contents: an observer's destructor touches the
@@ -217,7 +354,11 @@ void WegletWindow::Init() {
   SetCanResize(true);
   SetCanMaximize(true);
   SetCanMinimize(true);
-  SetTitle(u"Weglet");
+  // "Weglet" alone for Default -- the common case -- so only a second or
+  // later profile's windows carry a visible label telling them apart.
+  const std::string profile = bridge_->CurrentProfile();
+  SetTitle(profile == "Default" ? u"Weglet"
+                                : base::UTF8ToUTF16("Weglet — " + profile));
 
   // Vertical stack: toolbar at its own height, page taking the rest. The
   // heights come from tokens.json through the generated header.
@@ -490,9 +631,45 @@ content::WebContents* WegletWindow::EnsureContentsFor(uint64_t id) {
     return found->second.contents.get();
   }
 
+  content::WebContents* contents = AttachContents(
+      id, content::WebContents::Create(
+              content::WebContents::CreateParams(browser_context_)));
+
+  // Not checked here: a restored URL may have been blocked since the
+  // session was written, but the throttle sees it like any other navigation.
+  const WegletBridge::BackForwardList history = bridge_->TabBackForwardList(id);
+  if (history.entries.size() <= 1) {
+    content::NavigationController::LoadURLParams load(
+        ResolveForEngine(bridge_->TabUrl(id)));
+    load.transition_type = ui::PAGE_TRANSITION_AUTO_TOPLEVEL;
+    contents->GetController().LoadURLWithParams(load);
+    return contents;
+  }
+
+  // A restored tab gets its whole back/forward list, so Back works in it
+  // the way it did before the restart.
+  std::vector<std::unique_ptr<content::NavigationEntry>> entries;
+  entries.reserve(history.entries.size());
+  for (const std::string& address : history.entries) {
+    entries.push_back(content::NavigationController::CreateNavigationEntry(
+        ResolveForEngine(address), content::Referrer(),
+        /*initiator_origin=*/std::nullopt, /*initiator_base_url=*/std::nullopt,
+        ui::PAGE_TRANSITION_RELOAD, /*is_renderer_initiated=*/false,
+        /*extra_headers=*/std::string(), browser_context_,
+        /*blob_url_loader_factory=*/nullptr));
+  }
+  content::NavigationController& controller = contents->GetController();
+  controller.Restore(static_cast<int>(history.cursor),
+                     content::RestoreType::kRestored, &entries);
+  controller.LoadIfNecessary();
+  return contents;
+}
+
+content::WebContents* WegletWindow::AttachContents(
+    uint64_t id,
+    std::unique_ptr<content::WebContents> contents) {
   Tab tab;
-  content::WebContents::CreateParams params(browser_context_);
-  tab.contents = content::WebContents::Create(params);
+  tab.contents = std::move(contents);
   tab.contents->SetDelegate(this);
   WindowHolder::CreateForWebContents(tab.contents.get(), this);
   // Isolated, not the default per-host mode: the default mode zoomed the
@@ -504,16 +681,28 @@ content::WebContents* WegletWindow::EnsureContentsFor(uint64_t id) {
   tab.observer =
       std::make_unique<WegletTabObserver>(this, id, tab.contents.get());
 
-  content::WebContents* contents = tab.contents.get();
+  content::WebContents* attached = tab.contents.get();
   tabs_.emplace(id, std::move(tab));
+  return attached;
+}
 
-  // Not checked here: a restored URL may have been blocked since the
-  // session was written, but the throttle sees it like any other navigation.
-  content::NavigationController::LoadURLParams load(
-      ResolveForEngine(bridge_->TabUrl(id)));
-  load.transition_type = ui::PAGE_TRANSITION_AUTO_TOPLEVEL;
-  contents->GetController().LoadURLWithParams(load);
-  return contents;
+content::WebContents* WegletWindow::AddTab(
+    const GURL& url,
+    WindowOpenDisposition disposition,
+    std::unique_ptr<content::WebContents> contents) {
+  const uint64_t in_front = bridge_->ActiveTabId(window_id_);
+  const uint64_t id = bridge_->OpenTab(window_id_, url.spec());
+  if (id == 0) {
+    // The model's own ceiling. Reported rather than silently ignored.
+    LOG(WARNING) << "tab limit reached, dropping a new tab";
+    return nullptr;
+  }
+  content::WebContents* attached = AttachContents(id, std::move(contents));
+  if (disposition == WindowOpenDisposition::NEW_BACKGROUND_TAB) {
+    bridge_->ActivateTab(in_front);
+  }
+  ShowActiveTab();
+  return attached;
 }
 
 void WegletWindow::ShowActiveTab() {
@@ -526,13 +715,26 @@ void WegletWindow::ShowActiveTab() {
 }
 
 void WegletWindow::NavigateActiveTabFromOmnibox(const std::string& input) {
+  // Enter with a row highlighted accepts that suggestion instead of
+  // re-resolving what is still sitting in the address bar's text.
+  if (omnibox_highlighted_ >= 0 &&
+      static_cast<size_t>(omnibox_highlighted_) < omnibox_suggestions_.size()) {
+    AcceptOmniboxSuggestion(omnibox_highlighted_);
+    return;
+  }
+  HideOmniboxSuggestions();
+
   // The model decides whether the text is an address or a search. A parser
   // here would be a second one next to the tested one.
   const std::string resolved = bridge_->ResolveOmnibox(input);
   if (resolved.empty()) {
     return;
   }
+  bridge_->RecordHistory(input, resolved);
+  NavigateActiveTabToResolvedUrl(resolved);
+}
 
+void WegletWindow::NavigateActiveTabToResolvedUrl(const std::string& resolved) {
   // Through ResolveForEngine like every other navigation path: the model
   // hands back "weglet://settings" verbatim, and the engine has never
   // heard of that scheme.
@@ -549,30 +751,79 @@ void WegletWindow::NavigateActiveTabFromOmnibox(const std::string& input) {
   contents->GetController().LoadURLWithParams(load);
 }
 
-void WegletWindow::GoBack() {
-  const uint64_t id = bridge_->ActiveTabId(window_id_);
-  const std::string url = bridge_->GoBack(id);
-  if (url.empty()) {
+void WegletWindow::QueryOmniboxSuggestions(const std::string& input,
+                                           int anchor_left,
+                                           int anchor_bottom) {
+  omnibox_anchor_left_ = anchor_left;
+  omnibox_anchor_bottom_ = anchor_bottom;
+  omnibox_suggestions_ = bridge_->QueryOmniboxSuggestions(input);
+  omnibox_highlighted_ = -1;
+  if (omnibox_suggestions_.empty()) {
+    HideOmniboxSuggestions();
     return;
   }
-  content::WebContents* contents = EnsureContentsFor(id);
-  content::NavigationController::LoadURLParams load(ResolveForEngine(url));
-  load.transition_type = ui::PAGE_TRANSITION_FORWARD_BACK;
-  contents->GetController().LoadURLWithParams(load);
-  Notify();
+  ShowOmniboxSuggestionsPopup();
+}
+
+void WegletWindow::HideOmniboxSuggestions() {
+  omnibox_suggestions_.clear();
+  omnibox_highlighted_ = -1;
+  if (omnibox_suggestions_popup_) {
+    omnibox_suggestions_popup_->Hide();
+  }
+}
+
+void WegletWindow::MoveOmniboxHighlight(bool forward) {
+  if (omnibox_suggestions_.empty()) {
+    return;
+  }
+  const int count = static_cast<int>(omnibox_suggestions_.size());
+  if (omnibox_highlighted_ < 0) {
+    omnibox_highlighted_ = forward ? 0 : count - 1;
+  } else {
+    omnibox_highlighted_ = (omnibox_highlighted_ + (forward ? 1 : -1) + count) % count;
+  }
+  ShowOmniboxSuggestionsPopup();
+}
+
+void WegletWindow::AcceptOmniboxSuggestion(int index) {
+  if (index < 0 || static_cast<size_t>(index) >= omnibox_suggestions_.size()) {
+    return;
+  }
+  const std::string url = omnibox_suggestions_[index].url;
+  HideOmniboxSuggestions();
+  NavigateActiveTabToResolvedUrl(url);
+}
+
+void WegletWindow::ShowOmniboxSuggestionsPopup() {
+  if (!omnibox_suggestions_popup_) {
+    omnibox_suggestions_popup_ =
+        std::make_unique<WegletOmniboxSuggestionsPopup>(this, state_service_);
+  }
+  std::vector<WegletStateService::PendingOmniboxSuggestion> items;
+  items.reserve(omnibox_suggestions_.size());
+  for (const WegletBridge::OmniboxSuggestion& suggestion : omnibox_suggestions_) {
+    items.push_back({suggestion.label, suggestion.url, suggestion.is_bookmark});
+  }
+  omnibox_suggestions_popup_->Show(std::move(items), omnibox_highlighted_,
+                                   omnibox_anchor_left_, omnibox_anchor_bottom_);
+}
+
+// The engine's own Back and Forward: the page comes out of the back/forward
+// cache with its scroll position and form state when it can, and a page
+// that was a POST result is not silently fetched again as a GET.
+void WegletWindow::GoBack() {
+  content::WebContents* contents = ActiveTabContents();
+  if (contents && contents->GetController().CanGoBack()) {
+    contents->GetController().GoBack();
+  }
 }
 
 void WegletWindow::GoForward() {
-  const uint64_t id = bridge_->ActiveTabId(window_id_);
-  const std::string url = bridge_->GoForward(id);
-  if (url.empty()) {
-    return;
+  content::WebContents* contents = ActiveTabContents();
+  if (contents && contents->GetController().CanGoForward()) {
+    contents->GetController().GoForward();
   }
-  content::WebContents* contents = EnsureContentsFor(id);
-  content::NavigationController::LoadURLParams load(ResolveForEngine(url));
-  load.transition_type = ui::PAGE_TRANSITION_FORWARD_BACK;
-  contents->GetController().LoadURLWithParams(load);
-  Notify();
 }
 
 void WegletWindow::Reload() {
@@ -648,21 +899,25 @@ void WegletWindow::ShowSecurityNotice(content::WebContents* contents) {
 }
 
 void WegletWindow::DismissSecurityNotice(content::WebContents* contents) {
+  if (!contents) {
+    return;
+  }
   if (security_guard_) {
     security_guard_->ClearPendingNotice(contents);
   }
-  // The throttle cancelled the navigation rather than committing an error
-  // page, so this is the page the user was on before.
-  const uint64_t id = TabIdFor(contents);
-  if (id == 0 && contents != nullptr) {
+  if (TabIdFor(contents) == 0) {
     return;
   }
-  const std::string url = bridge_->GoBack(id);
-  content::NavigationController::LoadURLParams load(
-      url.empty() ? GURL(url::kAboutBlankURL) : ResolveForEngine(url));
+  // The throttle cancelled the navigation rather than committing an error
+  // page, so the entry before the notice is the page the user was on.
+  content::NavigationController& controller = contents->GetController();
+  if (controller.CanGoBack()) {
+    controller.GoBack();
+    return;
+  }
+  content::NavigationController::LoadURLParams load{GURL(url::kAboutBlankURL)};
   load.transition_type = ui::PAGE_TRANSITION_AUTO_TOPLEVEL;
-  contents->GetController().LoadURLWithParams(load);
-  Notify();
+  controller.LoadURLWithParams(load);
 }
 
 void WegletWindow::OpenSaveShortcutPopup(int anchor_right, int anchor_bottom) {
@@ -755,15 +1010,7 @@ void WegletWindow::OpenDevTools(int inspect_x, int inspect_y) {
   if (!inspected) {
     return;
   }
-  const int port = WegletDevToolsManagerDelegate::GetHttpHandlerPort();
-  if (port == 0) {
-    LOG(WARNING) << "devtools http handler is not up yet";
-    return;
-  }
-  const GURL frontend_url(base::StringPrintf(
-      "http://127.0.0.1:%d/devtools/devtools_app.html?targetType=tab", port));
-
-  const uint64_t id = bridge_->OpenTab(window_id_, frontend_url.spec());
+  const uint64_t id = bridge_->OpenTab(window_id_, DevToolsFrontendUrl().spec());
   if (id == 0) {
     LOG(WARNING) << "tab limit reached, dropping devtools";
     return;
@@ -896,7 +1143,7 @@ void WegletWindow::HideMenu() {
 }
 
 void WegletWindow::HandleContextMenuAction(const std::string& id) {
-  content::WebContents* target = pending_context_menu_contents_;
+  content::WebContents* target = pending_context_menu_contents_.get();
   const GURL link_url = pending_context_menu_link_;
   const gfx::Point point = pending_context_menu_point_;
   const std::vector<std::u16string> suggestions =
@@ -953,7 +1200,7 @@ void WegletWindow::HandleContextMenuAction(const std::string& id) {
 }
 
 void WegletWindow::HideContextMenu() {
-  pending_context_menu_contents_ = nullptr;
+  pending_context_menu_contents_.reset();
   pending_context_menu_link_ = GURL();
   pending_context_menu_point_ = gfx::Point();
   pending_context_menu_suggestions_.clear();
@@ -1027,16 +1274,30 @@ void WegletWindow::Notify() {
   }
 }
 
-void WegletWindow::OnTabNavigated(uint64_t id,
-                                  const GURL& url,
-                                  bool same_document) {
-  // pushState or a fragment change: the engine already owns that history
-  // entry.
-  if (same_document) {
-    bridge_->UrlReplaced(id, url);
-  } else {
-    bridge_->Navigated(id, url);
+void WegletWindow::OnTabBackForwardListChanged(uint64_t id, bool new_document) {
+  auto found = tabs_.find(id);
+  if (found == tabs_.end()) {
+    return;
   }
+  content::NavigationController& controller =
+      found->second.contents->GetController();
+  WegletBridge::BackForwardList history;
+  for (int index = 0; index < controller.GetEntryCount(); ++index) {
+    content::NavigationEntry* entry = controller.GetEntryAtIndex(index);
+    // The placeholder a WebContents holds before its first navigation
+    // commits is not a page the user was on.
+    if (entry->IsInitialEntry()) {
+      continue;
+    }
+    if (index == controller.GetLastCommittedEntryIndex()) {
+      history.cursor = history.entries.size();
+    }
+    history.entries.push_back(entry->GetURL().spec());
+  }
+  if (history.entries.empty()) {
+    return;
+  }
+  bridge_->BackForwardListChanged(id, history, new_document);
   Notify();
 }
 
@@ -1068,27 +1329,48 @@ content::WebContents* WegletWindow::OpenURLFromTab(
     const content::OpenURLParams& params,
     base::OnceCallback<void(content::NavigationHandle&)>
         navigation_handle_callback) {
-  // Every disposition lands in a tab, not a window we do not control.
-  const uint64_t id = bridge_->OpenTab(window_id_, params.url.spec());
-  if (id == 0) {
-    LOG(WARNING) << "tab limit reached, dropping window.open";
+  // The toolbar is not a tab, and navigating it away would take the
+  // window's controls with it.
+  content::WebContents* target = nullptr;
+  if (params.disposition == WindowOpenDisposition::CURRENT_TAB &&
+      TabIdFor(source) != 0) {
+    target = source;
+  } else {
+    // Every other disposition lands in a tab, not a window we do not
+    // control.
+    target = AddTab(params.url, params.disposition,
+                    content::WebContents::Create(
+                        content::WebContents::CreateParams(browser_context_)));
+  }
+  if (!target) {
     return nullptr;
   }
-  content::WebContents* contents = EnsureContentsFor(id);
-  ShowActiveTab();
-  return contents;
+
+  // From `params`, not a bare URL: the initiator, referrer, POST body and
+  // user gesture are what make a page's navigation stay the page's. A
+  // navigation without an initiator counts as the user's own, and sends
+  // SameSite=Strict cookies to the site the page linked to.
+  base::WeakPtr<content::NavigationHandle> handle =
+      target->GetController().LoadURLWithParams(
+          content::NavigationController::LoadURLParams(params));
+  if (handle && navigation_handle_callback) {
+    std::move(navigation_handle_callback).Run(*handle);
+  }
+  return target;
 }
 
-bool WegletWindow::IsWebContentsCreationOverridden(
-    content::RenderFrameHost* opener,
-    content::SiteInstance* source_site_instance,
-    content::mojom::WindowContainerType window_container_type,
-    const GURL& opener_url,
-    const std::string& frame_name,
-    const GURL& target_url) {
-  // True means the embedder handles this, so content does not create a
-  // bare popup. The navigation arrives through OpenURLFromTab instead.
-  return true;
+content::WebContents* WegletWindow::AddNewContents(
+    content::WebContents* source,
+    std::unique_ptr<content::WebContents> new_contents,
+    const GURL& target_url,
+    WindowOpenDisposition disposition,
+    const blink::mojom::WindowFeatures& window_features,
+    bool user_gesture,
+    bool* was_blocked) {
+  // Popups and new windows become tabs too. Content created the contents,
+  // so the opener can reach it: a sign-in popup posts its result back
+  // through window.opener.
+  return AddTab(target_url, disposition, std::move(new_contents));
 }
 
 bool WegletWindow::HandleContextMenu(content::RenderFrameHost& render_frame_host,
@@ -1096,8 +1378,7 @@ bool WegletWindow::HandleContextMenu(content::RenderFrameHost& render_frame_host
   content::WebContents* source_contents =
       content::WebContents::FromRenderFrameHost(&render_frame_host);
   // The toolbar and our own popups have no business showing this -- every
-  // other WebContents naming `this` as delegate is a real tab. Not
-  // TabIdFor(): a tab's id can legitimately be 0.
+  // other WebContents naming `this` as delegate is a real tab.
   if (!source_contents || source_contents == toolbar_contents_.get()) {
     return false;
   }
@@ -1148,7 +1429,7 @@ bool WegletWindow::HandleContextMenu(content::RenderFrameHost& render_frame_host
     screen_point += view->GetViewBounds().OffsetFromOrigin();
   }
 
-  pending_context_menu_contents_ = source_contents;
+  pending_context_menu_contents_ = source_contents->GetWeakPtr();
   pending_context_menu_link_ = params.link_url;
   pending_context_menu_point_ = gfx::Point(params.x, params.y);
   pending_context_menu_screen_point_ = screen_point;

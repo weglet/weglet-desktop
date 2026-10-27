@@ -1,8 +1,14 @@
 # Copyright 2026 Weglet - Licensed under Apache 2.0
 #
-# Cargo builds one static library; GN links it. See build_rust.py.
+# Cargo builds one shared library; weglet links against it and loads it
+# from its own directory. See build_rust.py.
 
 import("//build/config/rust.gni")
+
+# A macOS dylib records the absolute path of cargo's output as its install
+# name unless rustc is given one, and nothing here sets one or copies the
+# dylib into an app bundle.
+assert(!is_mac, "weglet_ffi is not set up as a macOS dylib")
 
 declare_args() {
   # Debug Rust with a debug Chromium. Off even in a debug build: a debug
@@ -15,19 +21,19 @@ if (weglet_rust_debug) {
   _profile = "debug"
 }
 
+# Next to the executable: Windows and the $ORIGIN rpath both look there.
 if (is_win) {
-  _lib_name = "weglet_ffi.lib"
+  _shared_library_path = "$root_out_dir/weglet_ffi.dll"
+  _import_library_path = "$target_out_dir/weglet_ffi.dll.lib"
 } else {
-  _lib_name = "libweglet_ffi.a"
+  _shared_library_path = "$root_out_dir/libweglet_ffi.so"
 }
-
-_lib_path = "$target_out_dir/$_lib_name"
 
 action("weglet_ffi_build") {
   script = "build_rust.py"
 
-    # Not listed file by file: the depfile below is generated from the
-    # actual sources.
+  # Not listed file by file: the depfile below is generated from the
+  # actual sources.
   inputs = [
     # The shared build helpers both this and the other scripts import.
     "//weglet/build_support.py",
@@ -42,7 +48,10 @@ action("weglet_ffi_build") {
     "//weglet/rust/Cargo.lock",
   ]
 
-  outputs = [ _lib_path ]
+  outputs = [ _shared_library_path ]
+  if (is_win) {
+    outputs += [ _import_library_path ]
+  }
   depfile = "$target_out_dir/weglet_ffi.d"
 
   args = [
@@ -50,33 +59,48 @@ action("weglet_ffi_build") {
     rebase_path("//weglet/rust/Cargo.toml", root_build_dir),
     "--target",
     rust_abi_target,
-    "--out",
-    rebase_path(_lib_path, root_build_dir),
+
+    # Its own target directory inside the GN output tree: sharing one with
+    # a developer's `cargo build` means fighting over the same lock.
+    "--target-dir",
+    rebase_path("$target_out_dir/rust", root_build_dir),
     "--profile",
     _profile,
     "--depfile",
     rebase_path(depfile, root_build_dir),
   ]
+  foreach(output, outputs) {
+    args += [
+      "--out",
+      rebase_path(output, root_build_dir),
+    ]
+  }
 }
 
-# What the rest of the build depends on: the header path and the library.
+# What the rest of the build depends on: the header path, the library to
+# link against, and the shared library to ship next to the executable.
 group("weglet_ffi") {
   public_configs = [ ":weglet_ffi_config" ]
   deps = [ ":weglet_ffi_build" ]
+  data = [ _shared_library_path ]
+
+  # All dependents rather than public: GN applies ldflags only to the
+  # target that links, and that is the executable, not weglet_lib.
+  if (!is_win) {
+    all_dependent_configs =
+        [ "//build/config/gcc:rpath_for_built_shared_libraries" ]
+  }
 }
 
 config("weglet_ffi_config") {
   include_dirs = [ "//weglet" ]
-  libs = [ _lib_path ]
 
   if (is_win) {
-    # Rust's std pulls these in on Windows.
-    libs += [
-      "advapi32.lib",
-      "bcrypt.lib",
-      "ntdll.lib",
-      "userenv.lib",
-      "ws2_32.lib",
-    ]
+    libs = [ _import_library_path ]
+  } else {
+    # -l rather than the path, so the executable records the bare file
+    # name and finds the library through the rpath.
+    lib_dirs = [ root_out_dir ]
+    libs = [ "weglet_ffi" ]
   }
 }

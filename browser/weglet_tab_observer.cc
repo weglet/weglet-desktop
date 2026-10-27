@@ -31,10 +31,17 @@ void WegletTabObserver::DidFinishNavigation(
     return;
   }
 
-  // pushState or a fragment change. The window turns this into a replace,
-  // or Back walks entries the engine already handled.
-  window_->OnTabNavigated(tab_id_, navigation_handle->GetURL(),
-                          navigation_handle->IsSameDocument());
+  window_->OnTabBackForwardListChanged(
+      tab_id_, /*new_document=*/!navigation_handle->IsSameDocument());
+}
+
+void WegletTabObserver::NavigationListPruned(
+    const content::PrunedDetails& pruned_details) {
+  window_->OnTabBackForwardListChanged(tab_id_, /*new_document=*/false);
+}
+
+void WegletTabObserver::NavigationEntriesDeleted() {
+  window_->OnTabBackForwardListChanged(tab_id_, /*new_document=*/false);
 }
 
 void WegletTabObserver::TitleWasSet(content::NavigationEntry* entry) {

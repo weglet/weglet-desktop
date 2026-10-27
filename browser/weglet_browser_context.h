@@ -6,6 +6,7 @@
 #define WEGLET_BROWSER_WEGLET_BROWSER_CONTEXT_H_
 
 #include <memory>
+#include <string>
 
 #include "base/files/file_path.h"
 #include "components/client_hints/browser/in_memory_client_hints_controller_delegate.h"
@@ -23,7 +24,9 @@ namespace weglet {
 // network by itself.
 class WegletBrowserContext : public content::BrowserContext {
  public:
-  explicit WegletBrowserContext(bool off_the_record);
+  // `profile` names the subdirectory under Weglet's data root -- see
+  // ProfilePath.
+  WegletBrowserContext(bool off_the_record, const std::string& profile);
   WegletBrowserContext(const WegletBrowserContext&) = delete;
   WegletBrowserContext& operator=(const WegletBrowserContext&) = delete;
   ~WegletBrowserContext() override;
@@ -56,10 +59,17 @@ class WegletBrowserContext : public content::BrowserContext {
   // GetPermissionControllerDelegate() above only hands out the interface.
   WegletPermissionDelegate* permission_delegate() { return &permission_delegate_; }
 
+  // For WegletBrowserMainParts to hand the delegate a WegletBridge once
+  // one exists -- it does not at construction time. Concrete type, like
+  // permission_delegate() above.
+  WegletDownloadManagerDelegate* download_manager_delegate() {
+    return &download_manager_delegate_;
+  }
+
  private:
-  // %LOCALAPPDATA%\Weglet on Windows, the XDG data dir elsewhere. Chosen
-  // once in the constructor.
-  static base::FilePath DefaultProfilePath();
+  // %LOCALAPPDATA%\Weglet\<profile> on Windows, the XDG data dir
+  // elsewhere. Chosen once in the constructor.
+  static base::FilePath ProfilePath(const std::string& profile);
 
   const bool off_the_record_;
   base::FilePath path_;

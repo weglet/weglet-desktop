@@ -61,6 +61,13 @@ void WegletStateService::CreateForBrowserContext(
 }
 
 // static
+// static
+void WegletStateService::RemoveFromBrowserContext(
+    content::BrowserContext* browser_context) {
+  browser_context->RemoveUserData(kUserDataKey);
+}
+
+// static
 WegletStateService* WegletStateService::FromBrowserContext(
     content::BrowserContext* browser_context) {
   if (!browser_context) {
@@ -129,6 +136,10 @@ bool WegletStateService::Affects(uint32_t changes, contract::PageKind kind) {
     case contract::PageKind::kSiteInfo:
     case contract::PageKind::kToast:
       return false;
+    case contract::PageKind::kOmniboxSuggestions:
+      // Like the find bar: new rows on every keystroke, while it stays
+      // open.
+      return (changes & kOmniboxSuggestions) != 0;
     case contract::PageKind::kHistory:
       return (changes & kHistory) != 0;
     case contract::PageKind::kBookmarks:
@@ -205,6 +216,18 @@ void WegletStateService::ClearPendingToasts(content::WebContents* contents) {
   pending_toasts_.erase(contents);
 }
 
+void WegletStateService::SetPendingOmniboxSuggestions(
+    content::WebContents* contents, PendingOmniboxSuggestions suggestions) {
+  if (!contents) {
+    return;
+  }
+  pending_omnibox_suggestions_[contents] = std::move(suggestions);
+}
+
+void WegletStateService::ClearPendingOmniboxSuggestions(content::WebContents* contents) {
+  pending_omnibox_suggestions_.erase(contents);
+}
+
 std::optional<base::DictValue> WegletStateService::BuildFor(
     const Entry& entry,
     content::WebContents* contents) {
@@ -256,6 +279,14 @@ std::optional<base::DictValue> WegletStateService::BuildFor(
       for (const std::string& host : snapshot.blocked_hosts) {
         blocked.Append(base::Value(host));
       }
+      base::ListValue profiles;
+      for (const std::string& profile : snapshot.profiles) {
+        profiles.Append(base::Value(profile));
+      }
+      base::ListValue profile_colors;
+      for (const std::string& color : snapshot.profile_colors) {
+        profile_colors.Append(base::Value(color));
+      }
       base::DictValue state;
       state.Set("engines", base::Value(std::move(engines)));
       state.Set("searchEngine", snapshot.search_engine);
@@ -269,6 +300,10 @@ std::optional<base::DictValue> WegletStateService::BuildFor(
                 static_cast<double>(snapshot.threat_feed_updated_at));
       state.Set("threatFeedLastUpdateFailed",
                 snapshot.threat_feed_last_update_failed);
+      state.Set("askWhereToSaveDownloads", snapshot.ask_where_to_save_downloads);
+      state.Set("profiles", base::Value(std::move(profiles)));
+      state.Set("profileColors", base::Value(std::move(profile_colors)));
+      state.Set("activeProfile", snapshot.active_profile);
       return state;
     }
     case contract::PageKind::kSecurityNotice: {
@@ -430,6 +465,24 @@ std::optional<base::DictValue> WegletStateService::BuildFor(
       }
       base::DictValue state;
       state.Set("items", base::Value(std::move(items)));
+      return state;
+    }
+    case contract::PageKind::kOmniboxSuggestions: {
+      auto found = pending_omnibox_suggestions_.find(contents);
+      if (found == pending_omnibox_suggestions_.end()) {
+        return std::nullopt;
+      }
+      base::ListValue items;
+      for (const PendingOmniboxSuggestion& suggestion : found->second.items) {
+        base::DictValue item_value;
+        item_value.Set("label", suggestion.label);
+        item_value.Set("url", suggestion.url);
+        item_value.Set("isBookmark", suggestion.is_bookmark);
+        items.Append(base::Value(std::move(item_value)));
+      }
+      base::DictValue state;
+      state.Set("items", base::Value(std::move(items)));
+      state.Set("highlightedIndex", found->second.highlighted_index);
       return state;
     }
     case contract::PageKind::kOther:

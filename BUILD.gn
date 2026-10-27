@@ -32,6 +32,10 @@ executable("weglet") {
   data_deps = [
     ":weglet_pak",
 
+    # v8_context_snapshot.bin. Every child process except the GPU one loads
+    # it at startup and stops with a fatal error when the file is missing.
+    "//tools/v8_context_snapshot",
+
     # Not a build input: it is here so the comparison runs. A resource
     # pack Chromium started expecting is otherwise found by a CHECK at
     # startup.
@@ -62,8 +66,8 @@ source_set("weglet_lib") {
     "browser/weglet_context_menu.h",
     "browser/weglet_devtools_bindings.cc",
     "browser/weglet_devtools_bindings.h",
-    "browser/weglet_devtools_manager_delegate.cc",
-    "browser/weglet_devtools_manager_delegate.h",
+    "browser/weglet_devtools_ui.cc",
+    "browser/weglet_devtools_ui.h",
     "browser/weglet_download_manager_delegate.cc",
     "browser/weglet_download_manager_delegate.h",
     "browser/weglet_download_observer.cc",
@@ -80,10 +84,14 @@ source_set("weglet_lib") {
     "browser/weglet_message_handler.h",
     "browser/weglet_navigation_throttle.cc",
     "browser/weglet_navigation_throttle.h",
+    "browser/weglet_omnibox_suggestions_popup.cc",
+    "browser/weglet_omnibox_suggestions_popup.h",
     "browser/weglet_permission_delegate.cc",
     "browser/weglet_permission_delegate.h",
     "browser/weglet_permission_prompt.cc",
     "browser/weglet_permission_prompt.h",
+    "browser/weglet_profile_manager.cc",
+    "browser/weglet_profile_manager.h",
     "browser/weglet_security_guard.cc",
     "browser/weglet_security_guard.h",
     "browser/weglet_shortcut_popup.cc",
@@ -139,6 +147,9 @@ source_set("weglet_lib") {
     "//components/client_hints/browser:in_memory",
     "//components/download/public/common:public",
     "//components/embedder_support:user_agent",
+    # The Mark-of-the-Web on finished downloads -- see
+    # WegletDownloadManagerDelegate::GetQuarantineConnectionCallback.
+    "//components/services/quarantine",
     # Spellcheck -- see WegletSpellCheckHost and
     # WegletContentRendererClient's SpellCheckProvider wiring. Not
     # //components/spellcheck/browser itself -- see the comment by its

@@ -1,0 +1,75 @@
+/* Copyright 2026 Weglet - Licensed under Apache 2.0
+ *
+ * A small floating popup -- see toast.css, which this mirrors. Its whole
+ * window is exactly this list, so there is no outer scroll region.
+ */
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: var(--color-surface-raised);
+}
+
+body {
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-menu);
+  box-sizing: border-box;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
+  color: var(--color-text);
+  font-family: "Instrument Sans", sans-serif;
+  padding: 4px;
+}
+
+#suggestion-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.suggestion-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  padding: var(--space-sm) var(--space-lg);
+  border-radius: var(--radius-menu-item);
+  cursor: pointer;
+}
+
+.suggestion-row:hover,
+.suggestion-row.highlighted {
+  background: var(--color-surface-hover);
+}
+
+.suggestion-icon {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-dim);
+}
+
+.suggestion-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-sm);
+}
+
+.suggestion-label {
+  font-size: var(--font-size-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.suggestion-url {
+  flex-shrink: 1;
+  min-width: 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

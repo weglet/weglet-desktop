@@ -22,6 +22,7 @@
 #include "services/network/public/cpp/simple_url_loader.h"
 #include "services/network/public/cpp/simple_url_loader_stream_consumer.h"
 #include "services/network/public/mojom/url_response_head.mojom.h"
+#include "weglet/browser/weglet_devtools_ui.h"
 #include "weglet/browser/weglet_window.h"
 
 namespace weglet {
@@ -130,6 +131,19 @@ void WegletDevToolsBindings::ReadyToCommitNavigation(
     content::NavigationHandle* navigation_handle) {
   content::RenderFrameHost* frame = navigation_handle->GetRenderFrameHost();
   if (navigation_handle->IsInPrimaryMainFrame()) {
+    // The front-end is an ordinary tab, and its address bar can take it
+    // anywhere. Only the front-end page itself gets the channel: on any
+    // other page it would be a protocol connection to the inspected tab.
+    // The whole URL, not just the origin: a parameter such as ws= points
+    // the front-end at a backend somewhere else.
+    if (navigation_handle->GetURL() != DevToolsFrontendUrl()) {
+      frontend_host_.reset();
+      if (agent_host_) {
+        agent_host_->DetachClient(this);
+        agent_host_ = nullptr;
+      }
+      return;
+    }
     frontend_host_ = content::DevToolsFrontendHost::Create(
         frame,
         base::BindRepeating(&WegletDevToolsBindings::HandleMessageFromDevToolsFrontend,
@@ -168,7 +182,9 @@ void WegletDevToolsBindings::AttachInternal() {
 }
 
 void WegletDevToolsBindings::PrimaryMainDocumentElementAvailable() {
-  AttachInternal();
+  if (frontend_host_) {
+    AttachInternal();
+  }
 }
 
 void WegletDevToolsBindings::WebContentsDestroyed() {

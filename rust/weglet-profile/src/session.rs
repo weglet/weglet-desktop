@@ -48,33 +48,13 @@ impl Session {
     // A missing file is a first run. A corrupt one is an error, and the
     // caller falls back to a fresh session rather than refusing to start.
     pub fn load(path: &Path) -> Result<Self, Error> {
-        let text = match std::fs::read_to_string(path) {
-            Ok(text) => text,
-            Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
-                return Ok(Self::default());
-            }
-            Err(source) => {
-                return Err(Error::Read {
-                    path: path.to_path_buf(),
-                    source,
-                })
-            }
-        };
-
-        let mut session: Self = toml::from_str(&text).map_err(|source| Error::Parse {
-            path: path.to_path_buf(),
-            source,
-        })?;
+        let mut session: Self = crate::store::load(path)?;
         session.repair();
         Ok(session)
     }
 
     pub fn save(&self, path: &Path) -> Result<(), Error> {
-        let text = toml::to_string_pretty(self).map_err(|source| Error::Serialise {
-            path: path.to_path_buf(),
-            source,
-        })?;
-        crate::atomic::write(path, &text)
+        crate::store::save(path, self)
     }
 
     // Makes anything that came off disk safe to index with: an
@@ -135,7 +115,7 @@ mod tests {
     fn file(name: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("weglet-session-{name}"));
         let _ = std::fs::remove_dir_all(&dir);
-        dir.join("session.toml")
+        dir.join("session.json")
     }
 
     fn tab(entries: &[&str], cursor: usize) -> SessionTab {
@@ -187,12 +167,13 @@ mod tests {
         assert_eq!(loaded.windows[1].active, 1);
     }
 
-    // A session written before windows existed must not lose its tabs.
+    // A session written before windows existed must not lose its tabs. It
+    // was written as TOML too, so it also goes through the conversion.
     #[test]
     fn a_pre_windows_session_becomes_one_window() {
         let path = file("upgrade");
         crate::atomic::write(
-            &path,
+            &path.with_extension("toml"),
             "active = 1\n\n[[tabs]]\nentries = [\"https://a.example\"]\ncursor = 0\n\n\
              [[tabs]]\nentries = [\"https://b.example\"]\ncursor = 0\n",
         )
@@ -260,7 +241,7 @@ mod tests {
     #[test]
     fn a_malformed_file_is_an_error() {
         let path = file("malformed");
-        crate::atomic::write(&path, "tabs = not-toml = =").unwrap();
+        crate::atomic::write(&path, "tabs = not-json = =").unwrap();
         assert!(matches!(Session::load(&path), Err(Error::Parse { .. })));
     }
 

@@ -1,15 +1,13 @@
 // Copyright 2026 Weglet - Licensed under Apache 2.0
 //
-// OpenPhish's public feed, kept as SHA-256 hashes of URL indicators so a
-// browsing URL is checked locally and never sent anywhere itself.
+// OpenPhish's public feed, reduced to URL indicators and checked locally:
+// a browsing URL is never sent anywhere. Kept as plain text: the feed is
+// public, so hashing it hid nothing, and the check is local either way.
 //
 // The fetch is the browser process's job -- it already has a network
 // stack. This module only ever sees text the browser already downloaded.
 
-use std::collections::HashSet;
-use std::sync::{OnceLock, RwLock};
-
-use sha2::{Digest, Sha256};
+use std::collections::BTreeSet;
 
 const MAX_FEED_LINES: usize = 50_000;
 const MIN_INDICATORS: usize = 50;
@@ -21,28 +19,9 @@ pub const KNOWN_PHISHING_TITLE: &str = "Known phishing site";
 pub const KNOWN_PHISHING_REASON: &str =
     "This address matches a known phishing site from a community threat feed.";
 
-// The live indicator set, seeded from the persisted cache at startup and
-// replaced whenever a refresh succeeds. A RwLock rather than the
-// set-once OnceLock pattern the rest of this crate uses elsewhere: a
-// refresh can happen many times in one process, not just once at
-// startup.
-fn live_hashes() -> &'static RwLock<HashSet<String>> {
-    static HASHES: OnceLock<RwLock<HashSet<String>>> = OnceLock::new();
-    HASHES.get_or_init(|| RwLock::new(HashSet::new()))
-}
-
-// Called once at startup with whatever the profile's cache holds, and
-// again after every successful refresh.
-pub fn set_live_hashes(hashes: HashSet<String>) {
-    *live_hashes().write().unwrap() = hashes;
-}
-
-pub fn is_known_phishing_now(url: &str) -> bool {
-    is_known_phishing(url, &live_hashes().read().unwrap())
-}
-
+// Ordered, so the cache that holds them is written the same way every time.
 pub struct ParsedFeed {
-    pub hashes: HashSet<String>,
+    pub indicators: BTreeSet<String>,
     pub source_count: usize,
 }
 
@@ -51,7 +30,7 @@ pub struct ParsedFeed {
 // that fails to parse should leave the last good cache in place, not
 // silently replace it with nothing.
 pub fn parse_feed(body: &str) -> Result<ParsedFeed, String> {
-    let mut hashes = HashSet::new();
+    let mut indicators = BTreeSet::new();
     let mut source_count = 0usize;
     for line in body.lines().take(MAX_FEED_LINES) {
         let line = line.trim();
@@ -60,30 +39,31 @@ pub fn parse_feed(body: &str) -> Result<ParsedFeed, String> {
         }
         let line_indicators = indicators_for_url(line);
         if !line_indicators.is_empty() {
-            hashes.extend(line_indicators);
+            indicators.extend(line_indicators);
             source_count += 1;
         }
     }
 
-    if hashes.len() < MIN_INDICATORS {
+    if indicators.len() < MIN_INDICATORS {
         return Err(format!(
             "threat feed produced too few indicators ({}, expected at least {MIN_INDICATORS})",
-            hashes.len()
+            indicators.len()
         ));
     }
     Ok(ParsedFeed {
-        hashes,
+        indicators,
         source_count,
     })
 }
 
-pub fn is_known_phishing(url: &str, hashes: &HashSet<String>) -> bool {
-    if hashes.is_empty() {
+// `indicators` is the profile's own set -- see ThreatFeedCache.
+pub fn is_known_phishing(url: &str, indicators: &BTreeSet<String>) -> bool {
+    if indicators.is_empty() {
         return false;
     }
     indicators_for_url(url)
         .iter()
-        .any(|indicator| hashes.contains(indicator))
+        .any(|indicator| indicators.contains(indicator))
 }
 
 // Authority + path, and authority + path + query when there's a query --
@@ -114,21 +94,16 @@ fn indicators_for_url(raw_url: &str) -> Vec<String> {
     let query: String = parsed.query().unwrap_or("").chars().take(2048).collect();
 
     let base = format!("{authority}|{path}");
-    let mut plain = Vec::new();
+    let mut indicators = Vec::new();
     if query.is_empty() {
-        plain.push(base);
+        indicators.push(base);
     } else {
-        plain.push(format!("{base}?{query}"));
+        indicators.push(format!("{base}?{query}"));
         if path != "/" {
-            plain.push(base);
+            indicators.push(base);
         }
     }
-    plain.iter().map(|value| sha256(value)).collect()
-}
-
-fn sha256(value: &str) -> String {
-    let digest = Sha256::digest(value.as_bytes());
-    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+    indicators
 }
 
 #[cfg(test)]
@@ -140,7 +115,7 @@ mod tests {
     }
 
     #[test]
-    fn the_same_url_always_hashes_the_same_way() {
+    fn the_same_url_always_gives_the_same_indicators() {
         let a = indicators_for_url("https://evil.example/login");
         let b = indicators_for_url("https://evil.example/login");
         assert_eq!(a, b);
@@ -165,16 +140,24 @@ mod tests {
     }
 
     #[test]
-    fn is_known_phishing_matches_a_hashed_indicator() {
-        let indicators = indicators_for_url("https://evil.example/login");
-        let hashes: HashSet<String> = indicators.into_iter().collect();
-        assert!(is_known_phishing("https://evil.example/login", &hashes));
-        assert!(!is_known_phishing("https://safe.example/", &hashes));
+    fn an_indicator_is_the_host_and_the_normalised_path() {
+        assert_eq!(
+            indicators_for_url("https://evil.example//login/"),
+            ["evil.example|/login"]
+        );
     }
 
     #[test]
-    fn an_empty_hash_set_matches_nothing() {
-        assert!(!is_known_phishing("https://evil.example/login", &HashSet::new()));
+    fn is_known_phishing_matches_an_indicator() {
+        let indicators: BTreeSet<String> =
+            indicators_for_url("https://evil.example/login").into_iter().collect();
+        assert!(is_known_phishing("https://evil.example/login", &indicators));
+        assert!(!is_known_phishing("https://safe.example/", &indicators));
+    }
+
+    #[test]
+    fn an_empty_indicator_set_matches_nothing() {
+        assert!(!is_known_phishing("https://evil.example/login", &BTreeSet::new()));
     }
 
     #[test]
@@ -190,7 +173,7 @@ mod tests {
             body.push_str(&feed_line(&format!("https://evil{i}.example/login")));
         }
         let parsed = parse_feed(&body).unwrap();
-        assert!(parsed.hashes.len() >= MIN_INDICATORS);
+        assert!(parsed.indicators.len() >= MIN_INDICATORS);
         assert_eq!(parsed.source_count, MIN_INDICATORS + 10);
     }
 

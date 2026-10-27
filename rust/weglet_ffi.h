@@ -118,9 +118,10 @@ bool weglet_omnibox_suggestion_is_bookmark_at(const WegletState* state, size_t i
 // `host` is the host the risk is about, empty when there is none to show.
 // The target URL is not returned -- the caller already has it.
 //
-// A pure function of the URL. Whether the user blocked the site is
-// weglet_is_url_blocked.
-uint32_t weglet_assess_navigation(const char* url,
+// Judged against this profile's lists. Whether the user blocked the site
+// is weglet_is_url_blocked.
+uint32_t weglet_assess_navigation(const WegletState* state,
+                                  const char* url,
                                   char** title,
                                   char** reason,
                                   char** host);
@@ -185,17 +186,29 @@ char* weglet_download_error_message_at(const WegletState* state, size_t index);
 uint64_t weglet_download_started_at_at(const WegletState* state, size_t index);
 // The file's own path on disk, for "reveal in folder" and "open".
 char* weglet_download_path_at(const WegletState* state, size_t index);
-void weglet_download_started(WegletState* state, const char* url, const char* path);
+// A download is named by its DownloadItem GUID: two downloads of one URL
+// are two records. `path` is the target path, empty until the download
+// manager has decided it.
+void weglet_download_started(WegletState* state,
+                             const char* guid,
+                             const char* url,
+                             const char* path);
 // `total_bytes` is -1 when the server sent no Content-Length.
-void weglet_download_progress(
-    WegletState* state, const char* url, uint64_t bytes_downloaded, int64_t total_bytes);
-void weglet_download_completed(WegletState* state, const char* url, uint64_t size_bytes);
-void weglet_download_failed(WegletState* state, const char* url, const char* message);
+void weglet_download_progress(WegletState* state,
+                              const char* guid,
+                              const char* path,
+                              uint64_t bytes_downloaded,
+                              int64_t total_bytes);
+void weglet_download_completed(WegletState* state,
+                               const char* guid,
+                               const char* path,
+                               uint64_t size_bytes);
+void weglet_download_failed(WegletState* state, const char* guid, const char* message);
 void weglet_clear_download_history(WegletState* state);
 
-// Threat feed: OpenPhish's public feed of known-phishing URLs, kept as
-// hashes -- see weglet-security/src/threat_feed.rs. The fetch itself is
-// the browser process's job; this only parses and matches.
+// Threat feed: OpenPhish's public feed of known-phishing URLs, kept per
+// profile as URL indicators -- see weglet-security/src/threat_feed.rs. The
+// fetch itself is the browser process's job; this only parses and matches.
 bool weglet_threat_feed_enabled(const WegletState* state);
 void weglet_set_threat_feed_enabled(WegletState* state, bool on);
 // Off by default: fetching a site's icon is itself a request to that
@@ -255,9 +268,9 @@ bool weglet_set_search_engine(WegletState* state, const char* id);
 // The choices to list, excluding "custom" -- that is what the id field and
 // the template box together mean. Read weglet_engine_count, then _id_at /
 // _label_at for 0..count.
-size_t weglet_engine_count();
-char* weglet_engine_id_at(size_t index);
-char* weglet_engine_label_at(size_t index);
+size_t weglet_engine_count(const WegletState* state);
+char* weglet_engine_id_at(const WegletState* state, size_t index);
+char* weglet_engine_label_at(const WegletState* state, size_t index);
 char* weglet_custom_search_url(const WegletState* state);
 // Accepted mid-edit; validated when it is used, in weglet_omnibox_resolve.
 void weglet_set_custom_search_url(WegletState* state, const char* url);

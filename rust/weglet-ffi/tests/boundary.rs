@@ -179,7 +179,7 @@ fn out_of_range_indices_are_answered_not_trusted() {
     assert_eq!(take(unsafe { abi::blocked_host_at(state, 999) }), "");
     assert!(!unsafe { abi::close_tab(state, 999) });
     assert!(!unsafe { abi::unblock_host(state, 999) });
-    assert_eq!(take(unsafe { abi::engine_id_at(999) }), "");
+    assert_eq!(take(unsafe { abi::engine_id_at(state, 999) }), "");
     unsafe { abi::state_free(state) };
 }
 
@@ -212,8 +212,8 @@ fn the_omnibox_resolves_through_the_configured_engine() {
 
     // Every id the engine list offers has to be one set_search_engine
     // accepts.
-    for index in 0..abi::engine_count() {
-        let id = take(unsafe { abi::engine_id_at(index) });
+    for index in 0..unsafe { abi::engine_count(state) } {
+        let id = take(unsafe { abi::engine_id_at(state, index) });
         assert!(
             unsafe { abi::set_search_engine(state, c(&id).as_ptr()) },
             "engine {id} is offered but not accepted"
@@ -226,11 +226,13 @@ fn the_omnibox_resolves_through_the_configured_engine() {
 #[test]
 fn one_assessment_fills_every_out_param() {
     let _f = guard("risk");
+    let state = abi::state_new();
     let (mut title, mut reason, mut host) =
         (std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut());
 
     let level = unsafe {
         abi::assess_navigation(
+            state,
             c("https://gooogle.com/").as_ptr(),
             &mut title,
             &mut reason,
@@ -241,6 +243,7 @@ fn one_assessment_fills_every_out_param() {
     assert!(take(title).contains("Google"));
     assert!(!take(reason).is_empty());
     assert_eq!(take(host), "gooogle.com");
+    unsafe { abi::state_free(state) };
 }
 
 // The out-params are written even when there is no risk, so a caller
@@ -248,10 +251,12 @@ fn one_assessment_fills_every_out_param() {
 #[test]
 fn a_safe_url_still_writes_empty_strings() {
     let _f = guard("risk-none");
+    let state = abi::state_new();
     let (mut title, mut reason, mut host) =
         (std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut());
     let level = unsafe {
         abi::assess_navigation(
+            state,
             c("https://example.com/").as_ptr(),
             &mut title,
             &mut reason,
@@ -262,14 +267,17 @@ fn a_safe_url_still_writes_empty_strings() {
     assert_eq!(take(title), "");
     assert_eq!(take(reason), "");
     assert_eq!(take(host), "");
+    unsafe { abi::state_free(state) };
 }
 
 // A caller that wants only the level passes nothing to fill.
 #[test]
 fn null_out_params_are_allowed() {
     let _f = guard("risk-null");
+    let state = abi::state_new();
     let level = unsafe {
         abi::assess_navigation(
+            state,
             c("https://gooogle.com/").as_ptr(),
             std::ptr::null_mut(),
             std::ptr::null_mut(),
@@ -277,6 +285,7 @@ fn null_out_params_are_allowed() {
         )
     };
     assert_eq!(level, 2);
+    unsafe { abi::state_free(state) };
 }
 
 #[test]
@@ -389,7 +398,7 @@ fn windows_hold_their_own_tabs_and_their_own_active_one() {
 fn settings_are_marked_dirty_and_written_only_on_flush() {
     let f = guard("flush");
     let state = abi::state_new();
-    let settings_file = f.dir.join("Weglet").join("Default").join("settings.toml");
+    let settings_file = f.dir.join("Weglet").join("Default").join("settings.json");
 
     assert!(!unsafe { abi::settings_dirty(state) });
     assert!(unsafe { abi::set_accent_color(state, c("#3B82F6").as_ptr()) });
@@ -509,7 +518,7 @@ fn bookmarks_round_trip_through_a_flush_and_a_fresh_state() {
         .dir
         .join("Weglet")
         .join("Default")
-        .join("bookmarks.toml")
+        .join("bookmarks.json")
         .exists());
 
     let state = abi::state_new();
@@ -576,19 +585,22 @@ fn omnibox_suggestions_are_empty_for_a_blank_query_and_out_of_range_reads_are_de
 fn a_download_moves_from_in_progress_to_completed() {
     let _f = guard("downloads");
     let state = abi::state_new();
-    let url = c("https://example.com/a.zip");
+    let guid = c("g-1");
+    let path = c("/tmp/a.zip");
 
-    unsafe { abi::download_started(state, url.as_ptr(), c("/tmp/a.zip").as_ptr()) };
+    unsafe {
+        abi::download_started(state, guid.as_ptr(), c("https://example.com/a.zip").as_ptr(), path.as_ptr())
+    };
     assert_eq!(unsafe { abi::download_count(state) }, 1);
     assert_eq!(unsafe { abi::download_status_at(state, 0) }, 0);
 
-    unsafe { abi::download_progress(state, url.as_ptr(), 1024, 4096) };
+    unsafe { abi::download_progress(state, guid.as_ptr(), path.as_ptr(), 1024, 4096) };
     assert_eq!(
         take(unsafe { abi::download_size_label_at(state, 0) }),
         "1.0 KB of 4.0 KB"
     );
 
-    unsafe { abi::download_completed(state, url.as_ptr(), 4096) };
+    unsafe { abi::download_completed(state, guid.as_ptr(), path.as_ptr(), 4096) };
     assert_eq!(unsafe { abi::download_status_at(state, 0) }, 1);
     assert_eq!(take(unsafe { abi::download_size_label_at(state, 0) }), "4.0 KB");
     unsafe { abi::state_free(state) };
@@ -598,10 +610,10 @@ fn a_download_moves_from_in_progress_to_completed() {
 fn a_failed_download_carries_the_real_error_message() {
     let _f = guard("downloads-failed");
     let state = abi::state_new();
-    let url = c("https://example.com/b.zip");
+    let guid = c("g-1");
     unsafe {
-        abi::download_started(state, url.as_ptr(), c("/tmp/b.zip").as_ptr());
-        abi::download_failed(state, url.as_ptr(), c("Server returned an error (HTTP 404)").as_ptr());
+        abi::download_started(state, guid.as_ptr(), c("https://example.com/b.zip").as_ptr(), c("/tmp/b.zip").as_ptr());
+        abi::download_failed(state, guid.as_ptr(), c("Server returned an error (HTTP 404)").as_ptr());
     }
     assert_eq!(unsafe { abi::download_status_at(state, 0) }, 2);
     assert_eq!(
@@ -618,7 +630,7 @@ fn a_download_still_in_progress_when_the_browser_closes_is_orphaned_on_restart()
     let f = guard("downloads-orphan");
     let state = abi::state_new();
     unsafe {
-        abi::download_started(state, c("https://example.com/c.zip").as_ptr(), c("/tmp/c.zip").as_ptr());
+        abi::download_started(state, c("g-1").as_ptr(), c("https://example.com/c.zip").as_ptr(), c("/tmp/c.zip").as_ptr());
         abi::flush_settings(state);
         abi::state_free(state);
     }
@@ -626,7 +638,7 @@ fn a_download_still_in_progress_when_the_browser_closes_is_orphaned_on_restart()
         .dir
         .join("Weglet")
         .join("Default")
-        .join("downloads.toml")
+        .join("downloads.json")
         .exists());
 
     let state = abi::state_new();
@@ -804,4 +816,60 @@ fn listed_profiles_are_every_directory_actually_on_disk_sorted() {
         .map(|i| take(abi::profile_name_at(i)))
         .collect();
     assert_eq!(names, vec!["Personal".to_string(), "Work".to_string()]);
+}
+
+// A profile an older Weglet wrote as TOML opens with its data, and is
+// converted to JSON on the way.
+#[test]
+fn a_profile_written_as_toml_opens_with_its_data() {
+    let f = guard("legacy-profile");
+    let profile = f.dir.join("Weglet").join("Default");
+    std::fs::create_dir_all(&profile).unwrap();
+    std::fs::write(profile.join("settings.toml"), "search-engine = \"bing\"
+").unwrap();
+    std::fs::write(
+        profile.join("bookmarks.toml"),
+        "[[entries]]
+title = \"A\"
+url = \"https://a.example/\"
+",
+    )
+    .unwrap();
+
+    let state = abi::state_new();
+    assert_eq!(take(unsafe { abi::search_engine(state) }), "bing");
+    assert_eq!(unsafe { abi::bookmark_count(state) }, 1);
+    assert_eq!(take(unsafe { abi::bookmark_url_at(state, 0) }), "https://a.example/");
+    unsafe { abi::state_free(state) };
+
+    for name in ["settings", "bookmarks"] {
+        assert!(profile.join(format!("{name}.json")).exists(), "{name}.json");
+        assert!(!profile.join(format!("{name}.toml")).exists(), "{name}.toml");
+    }
+}
+
+// A profile's own engines table written for an older Weglet is TOML: it is
+// converted, and the profile offers its engines.
+#[test]
+fn a_profile_engines_table_written_as_toml_is_converted_and_used() {
+    let f = guard("legacy-engines");
+    let profile = f.dir.join("Weglet").join("Default");
+    std::fs::create_dir_all(&profile).unwrap();
+    std::fs::write(
+        profile.join("engines.toml"),
+        "[[engine]]
+id = \"only\"
+label = \"Only\"
+template = \"https://only.example/?q=%s\"
+",
+    )
+    .unwrap();
+
+    let state = abi::state_new();
+    assert_eq!(unsafe { abi::engine_count(state) }, 1);
+    assert_eq!(take(unsafe { abi::engine_id_at(state, 0) }), "only");
+    assert_eq!(take(unsafe { abi::search_engine(state) }), "only");
+    unsafe { abi::state_free(state) };
+    assert!(profile.join("engines.json").exists());
+    assert!(!profile.join("engines.toml").exists());
 }

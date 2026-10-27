@@ -5,18 +5,15 @@
 // measured rates live in tests/corpus.rs.
 
 mod blocklist;
+mod lists;
 mod risk;
 mod threat_feed;
 
 pub use blocklist::{
-    canonical_host, is_blocked_host, matches_user_blocklist, set_blocklist_override,
-    USER_BLOCK_REASON, USER_BLOCK_TITLE,
+    canonical_host, is_blocked_host, matches_user_blocklist, USER_BLOCK_REASON, USER_BLOCK_TITLE,
 };
-pub use risk::{
-    assess_navigation, set_brand_rules_override, set_sensitive_words_override,
-    NavigationRisk, RiskLevel,
-};
+pub use lists::Lists;
+pub use risk::{assess_navigation, NavigationRisk, RiskLevel};
 pub use threat_feed::{
-    is_known_phishing, is_known_phishing_now, parse_feed, set_live_hashes, ParsedFeed,
-    KNOWN_PHISHING_REASON, KNOWN_PHISHING_TITLE,
+    is_known_phishing, parse_feed, ParsedFeed, KNOWN_PHISHING_REASON, KNOWN_PHISHING_TITLE,
 };

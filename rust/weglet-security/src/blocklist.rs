@@ -5,17 +5,14 @@
 // and nothing uses it yet. See docs/security.md.
 
 use std::collections::HashSet;
-use std::sync::OnceLock;
+
+use crate::Lists;
 
 // The built-in list, as data. One host per line -- see data/blocklist.txt.
 // include_str! rather than a file read at startup: Weglet ships one
-// executable and nothing beside it, and set_blocklist_override can
-// replace the table at runtime.
-const BUILT_IN_BLOCKLIST: &str = include_str!("../data/blocklist.txt");
-
-// A list loaded from the profile, if there is one. Replaces the built-in
-// one rather than adding to it.
-static OVERRIDE: OnceLock<HashSet<String>> = OnceLock::new();
+// executable and nothing beside it, and a profile can replace the table --
+// see Lists.
+pub(crate) const BUILT_IN_BLOCKLIST: &str = include_str!("../data/blocklist.txt");
 
 // One host per line, '#' starts a comment.
 pub fn parse_host_list(text: &str) -> HashSet<String> {
@@ -24,12 +21,6 @@ pub fn parse_host_list(text: &str) -> HashSet<String> {
         .filter(|line| !line.is_empty())
         .map(canonical_host)
         .collect()
-}
-
-// Installs a list read from the profile. Ignored if called twice: the
-// answer changing under an open page is worse than a stale list.
-pub fn set_blocklist_override(text: &str) {
-    let _ = OVERRIDE.set(parse_host_list(text));
 }
 
 
@@ -44,21 +35,12 @@ pub fn canonical_host(host: &str) -> String {
     idna::domain_to_ascii(&trimmed).unwrap_or(trimmed)
 }
 
-// Canonicalised once at first use: this runs for every subresource of
-// every page.
-fn blocked_set() -> &'static HashSet<String> {
-    if let Some(overridden) = OVERRIDE.get() {
-        return overridden;
-    }
-    static SET: OnceLock<HashSet<String>> = OnceLock::new();
-    SET.get_or_init(|| parse_host_list(BUILT_IN_BLOCKLIST))
-}
-
 // Walks up the domain (a.b.example.com -> b.example.com -> ...), so a
 // subdomain of a blocked host is caught too.
-pub fn is_blocked_host(host: &str) -> bool {
-    let set = blocked_set();
-    walk_up(&canonical_host(host), |candidate| set.contains(candidate))
+pub fn is_blocked_host(lists: &Lists, host: &str) -> bool {
+    walk_up(&canonical_host(host), |candidate| {
+        lists.blocked_hosts.contains(candidate)
+    })
 }
 
 // What the notice says when the user's own list stopped a navigation.
@@ -121,23 +103,23 @@ mod tests {
 
     #[test]
     fn an_exact_blocked_host_matches() {
-        assert!(is_blocked_host("doubleclick.net"));
+        assert!(is_blocked_host(&Lists::built_in(), "doubleclick.net"));
     }
 
     #[test]
     fn a_subdomain_of_a_blocked_host_matches() {
-        assert!(is_blocked_host("stats.doubleclick.net"));
+        assert!(is_blocked_host(&Lists::built_in(), "stats.doubleclick.net"));
     }
 
     #[test]
     fn an_unrelated_host_does_not_match() {
-        assert!(!is_blocked_host("example.com"));
+        assert!(!is_blocked_host(&Lists::built_in(), "example.com"));
     }
 
     #[test]
     fn a_host_that_merely_contains_a_blocked_name_does_not_match() {
         // Not a suffix match: "notdoubleclick.net" != "doubleclick.net".
-        assert!(!is_blocked_host("notdoubleclick.net"));
+        assert!(!is_blocked_host(&Lists::built_in(), "notdoubleclick.net"));
     }
 
     #[test]
@@ -157,9 +139,9 @@ mod tests {
     // them.
     #[test]
     fn a_host_matches_however_it_is_spelled() {
-        assert!(is_blocked_host("DoubleClick.net"));
-        assert!(is_blocked_host("doubleclick.net."));
-        assert!(is_blocked_host("STATS.DoubleClick.NET."));
+        assert!(is_blocked_host(&Lists::built_in(), "DoubleClick.net"));
+        assert!(is_blocked_host(&Lists::built_in(), "doubleclick.net."));
+        assert!(is_blocked_host(&Lists::built_in(), "STATS.DoubleClick.NET."));
 
         let blocked = vec!["\u{41f}\u{440}\u{438}\u{43c}\u{435}\u{440}.\u{440}\u{444}".to_string()];
         assert!(matches_user_blocklist("xn--e1afmkfd.xn--p1ai", &blocked));

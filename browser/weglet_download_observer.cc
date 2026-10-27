@@ -25,9 +25,9 @@ WegletDownloadObserver::~WegletDownloadObserver() {
 void WegletDownloadObserver::OnDownloadCreated(
     content::DownloadManager* manager,
     download::DownloadItem* item) {
-  // Target path may still be empty here (see download_manager.h); the
-  // record already exists by URL for OnDownloadUpdated to find once set.
-  bridge_->DownloadStarted(item->GetURL().spec(),
+  // Target path may still be empty here (see download_manager.h); every
+  // update below carries it, so the record gets it once it is set.
+  bridge_->DownloadStarted(item->GetGuid(), item->GetURL().spec(),
                            item->GetTargetFilePath().AsUTF8Unsafe());
   item->AddObserver(this);
   state_->Notify(WegletStateService::kHistory);
@@ -39,21 +39,22 @@ void WegletDownloadObserver::ManagerGoingDown(
 }
 
 void WegletDownloadObserver::OnDownloadUpdated(download::DownloadItem* item) {
-  const std::string url = item->GetURL().spec();
+  const std::string& guid = item->GetGuid();
+  const std::string path = item->GetTargetFilePath().AsUTF8Unsafe();
   switch (item->GetState()) {
     case download::DownloadItem::IN_PROGRESS: {
       const int64_t total = item->GetTotalBytes();
-      bridge_->DownloadProgress(url, item->GetReceivedBytes(),
+      bridge_->DownloadProgress(guid, path, item->GetReceivedBytes(),
                                 total > 0 ? total : -1);
       break;
     }
     case download::DownloadItem::COMPLETE:
-      bridge_->DownloadCompleted(url, item->GetReceivedBytes());
+      bridge_->DownloadCompleted(guid, path, item->GetReceivedBytes());
       break;
     case download::DownloadItem::CANCELLED:
     case download::DownloadItem::INTERRUPTED:
       bridge_->DownloadFailed(
-          url, download::DownloadInterruptReasonToString(item->GetLastReason()));
+          guid, download::DownloadInterruptReasonToString(item->GetLastReason()));
       break;
     case download::DownloadItem::MAX_DOWNLOAD_STATE:
       break;

@@ -21,6 +21,10 @@ pub enum DownloadStatus {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "kebab-case")]
 pub struct DownloadRecord {
+    // content::DownloadItem's GUID: what tells two downloads of the same
+    // URL apart. Empty in a record written before it was kept, which no
+    // update ever matches -- such a record is finished anyway.
+    pub guid: String,
     pub url: String,
     pub filename: String,
     pub path: String,
@@ -42,6 +46,7 @@ pub struct DownloadRecord {
 impl Default for DownloadRecord {
     fn default() -> Self {
         Self {
+            guid: String::new(),
             url: String::new(),
             filename: String::new(),
             path: String::new(),
@@ -55,20 +60,35 @@ impl Default for DownloadRecord {
 }
 
 impl DownloadRecord {
-    pub fn started(url: &str, path: &Path) -> Self {
-        let filename = path
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_else(|| url.to_string());
-        Self {
+    pub fn started(guid: &str, url: &str, path: &Path) -> Self {
+        let mut record = Self {
+            guid: guid.to_string(),
             url: url.to_string(),
-            filename,
-            path: path.to_string_lossy().into_owned(),
+            filename: String::new(),
+            path: String::new(),
             status: DownloadStatus::InProgress,
             started_at: unix_now(),
             bytes_downloaded: 0,
             total_bytes: None,
             error_message: None,
+        };
+        record.set_path(path);
+        record
+    }
+
+    // The target path, once the download manager has decided it: often
+    // still empty when the download starts. The filename falls back to the
+    // URL until then.
+    fn set_path(&mut self, path: &Path) {
+        if path.as_os_str().is_empty() {
+            if self.filename.is_empty() {
+                self.filename = self.url.clone();
+            }
+            return;
+        }
+        self.path = path.to_string_lossy().into_owned();
+        if let Some(name) = path.file_name() {
+            self.filename = name.to_string_lossy().into_owned();
         }
     }
 }
@@ -86,22 +106,7 @@ const MAX_RECORDS: usize = 200;
 
 impl Downloads {
     pub fn load(path: &Path) -> Result<Self, Error> {
-        let text = match std::fs::read_to_string(path) {
-            Ok(text) => text,
-            Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
-                return Ok(Self::default());
-            }
-            Err(source) => {
-                return Err(Error::Read {
-                    path: path.to_path_buf(),
-                    source,
-                });
-            }
-        };
-        toml::from_str(&text).map_err(|source| Error::Parse {
-            path: path.to_path_buf(),
-            source,
-        })
+        crate::store::load(path)
     }
 
     pub fn save(&mut self, path: &Path) -> Result<(), Error> {
@@ -111,52 +116,60 @@ impl Downloads {
             self.records.sort_by_key(|record| std::cmp::Reverse(record.started_at));
             self.records.truncate(MAX_RECORDS);
         }
-        let text = toml::to_string_pretty(self).map_err(|source| Error::Serialise {
-            path: path.to_path_buf(),
-            source,
-        })?;
-        crate::atomic::write(path, &text)
+        crate::store::save(path, self)
     }
 
-    pub fn started(&mut self, url: &str, path: &Path) {
-        self.records.insert(0, DownloadRecord::started(url, path));
+    pub fn started(&mut self, guid: &str, url: &str, path: &Path) {
+        self.records.insert(0, DownloadRecord::started(guid, url, path));
     }
 
-    // Updates the most recent still-in-progress record for `url` with a
-    // new byte count from DownloadItem's own progress callback. No-op
-    // (returns false) if not found -- e.g. a stray late callback after
-    // the record was already resolved.
-    pub fn update_progress(&mut self, url: &str, bytes_downloaded: u64, total_bytes: Option<u64>) -> bool {
-        for record in &mut self.records {
-            if record.url == url && record.status == DownloadStatus::InProgress {
-                record.bytes_downloaded = bytes_downloaded;
-                record.total_bytes = total_bytes;
-                return true;
-            }
+    // The still-in-progress record for `guid`. None for an unknown GUID or
+    // a record already resolved -- a stray late callback, say.
+    fn in_progress(&mut self, guid: &str) -> Option<&mut DownloadRecord> {
+        if guid.is_empty() {
+            return None;
         }
-        false
+        self.records
+            .iter_mut()
+            .find(|record| record.guid == guid && record.status == DownloadStatus::InProgress)
     }
 
-    pub fn mark_completed(&mut self, url: &str, size_bytes: u64) -> bool {
-        for record in &mut self.records {
-            if record.url == url && record.status == DownloadStatus::InProgress {
-                record.status = DownloadStatus::Completed;
-                record.bytes_downloaded = size_bytes;
-                return true;
-            }
-        }
-        false
+    // A new byte count and, once it is known, the target path, from
+    // DownloadItem's own progress callback. False if no in-progress record
+    // has this GUID.
+    pub fn update_progress(
+        &mut self,
+        guid: &str,
+        path: &Path,
+        bytes_downloaded: u64,
+        total_bytes: Option<u64>,
+    ) -> bool {
+        let Some(record) = self.in_progress(guid) else {
+            return false;
+        };
+        record.set_path(path);
+        record.bytes_downloaded = bytes_downloaded;
+        record.total_bytes = total_bytes;
+        true
     }
 
-    pub fn mark_failed(&mut self, url: &str, message: String) -> bool {
-        for record in &mut self.records {
-            if record.url == url && record.status == DownloadStatus::InProgress {
-                record.status = DownloadStatus::Failed;
-                record.error_message = Some(message);
-                return true;
-            }
-        }
-        false
+    pub fn mark_completed(&mut self, guid: &str, path: &Path, size_bytes: u64) -> bool {
+        let Some(record) = self.in_progress(guid) else {
+            return false;
+        };
+        record.set_path(path);
+        record.status = DownloadStatus::Completed;
+        record.bytes_downloaded = size_bytes;
+        true
+    }
+
+    pub fn mark_failed(&mut self, guid: &str, message: String) -> bool {
+        let Some(record) = self.in_progress(guid) else {
+            return false;
+        };
+        record.status = DownloadStatus::Failed;
+        record.error_message = Some(message);
+        true
     }
 
     // Any record still InProgress at load time is orphaned -- the
@@ -232,7 +245,7 @@ mod tests {
     fn file(name: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("weglet-downloads-{name}"));
         let _ = std::fs::remove_dir_all(&dir);
-        dir.join("downloads.toml")
+        dir.join("downloads.json")
     }
 
     #[test]
@@ -244,14 +257,14 @@ mod tests {
     fn a_record_round_trips_through_disk() {
         let path = file("roundtrip");
         let mut downloads = Downloads::default();
-        downloads.started("https://example.com/a.zip", Path::new("/tmp/a.zip"));
+        downloads.started("g-1", "https://example.com/a.zip", Path::new("/tmp/a.zip"));
         downloads.save(&path).unwrap();
         assert_eq!(Downloads::load(&path).unwrap(), downloads);
     }
 
     #[test]
     fn started_derives_the_filename_from_the_path() {
-        let record = DownloadRecord::started("https://example.com/x", Path::new("/dl/report.pdf"));
+        let record = DownloadRecord::started("g-1", "https://example.com/x", Path::new("/dl/report.pdf"));
         assert_eq!(record.filename, "report.pdf");
         assert_eq!(record.status, DownloadStatus::InProgress);
     }
@@ -259,8 +272,8 @@ mod tests {
     #[test]
     fn update_progress_sets_the_live_byte_counts() {
         let mut downloads = Downloads::default();
-        downloads.started("https://example.com/a.zip", Path::new("/tmp/a.zip"));
-        assert!(downloads.update_progress("https://example.com/a.zip", 1024, Some(4096)));
+        downloads.started("g-1", "https://example.com/a.zip", Path::new("/tmp/a.zip"));
+        assert!(downloads.update_progress("g-1", Path::new("/tmp/a.zip"), 1024, Some(4096)));
         assert_eq!(downloads.records[0].bytes_downloaded, 1024);
         assert_eq!(downloads.records[0].total_bytes, Some(4096));
         assert_eq!(downloads.records[0].status, DownloadStatus::InProgress);
@@ -269,8 +282,8 @@ mod tests {
     #[test]
     fn mark_completed_updates_the_matching_in_progress_record() {
         let mut downloads = Downloads::default();
-        downloads.started("https://example.com/a.zip", Path::new("/tmp/a.zip"));
-        assert!(downloads.mark_completed("https://example.com/a.zip", 2048));
+        downloads.started("g-1", "https://example.com/a.zip", Path::new("/tmp/a.zip"));
+        assert!(downloads.mark_completed("g-1", Path::new("/tmp/a.zip"), 2048));
         assert_eq!(downloads.records[0].status, DownloadStatus::Completed);
         assert_eq!(downloads.records[0].bytes_downloaded, 2048);
     }
@@ -278,9 +291,9 @@ mod tests {
     #[test]
     fn mark_failed_sets_status_and_the_real_error_message() {
         let mut downloads = Downloads::default();
-        downloads.started("https://example.com/a.zip", Path::new("/tmp/a.zip"));
+        downloads.started("g-1", "https://example.com/a.zip", Path::new("/tmp/a.zip"));
         assert!(downloads.mark_failed(
-            "https://example.com/a.zip",
+            "g-1",
             "Server returned an error (HTTP 404)".to_string()
         ));
         assert_eq!(downloads.records[0].status, DownloadStatus::Failed);
@@ -294,10 +307,10 @@ mod tests {
     fn fail_orphaned_in_progress_marks_only_in_progress_records() {
         let mut downloads = Downloads {
             records: vec![
-                DownloadRecord::started("https://example.com/a", Path::new("/tmp/a")),
+                DownloadRecord::started("g-1", "https://example.com/a", Path::new("/tmp/a")),
                 DownloadRecord {
                     status: DownloadStatus::Completed,
-                    ..DownloadRecord::started("https://example.com/b", Path::new("/tmp/b"))
+                    ..DownloadRecord::started("g-2", "https://example.com/b", Path::new("/tmp/b"))
                 },
             ],
         };
@@ -308,21 +321,48 @@ mod tests {
         assert_eq!(downloads.records[1].status, DownloadStatus::Completed);
     }
 
+    // The same file downloaded twice at once: each callback reaches its
+    // own record, not whichever of the two shares the URL.
     #[test]
-    fn mark_completed_prefers_the_most_recent_matching_record() {
+    fn two_downloads_of_one_url_keep_their_own_progress() {
         let mut downloads = Downloads::default();
-        downloads.started("https://example.com/a.zip", Path::new("/tmp/a.zip"));
-        downloads.started("https://example.com/a.zip", Path::new("/tmp/a (1).zip"));
-        downloads.mark_completed("https://example.com/a.zip", 10);
-        // Inserted newest-first, so index 0 is "(1)".
-        assert_eq!(downloads.records[0].status, DownloadStatus::Completed);
-        assert_eq!(downloads.records[1].status, DownloadStatus::InProgress);
+        downloads.started("g-1", "https://example.com/a.zip", Path::new("/tmp/a.zip"));
+        downloads.started("g-2", "https://example.com/a.zip", Path::new("/tmp/a (1).zip"));
+        assert!(downloads.update_progress("g-1", Path::new("/tmp/a.zip"), 100, Some(1000)));
+        assert!(downloads.update_progress("g-2", Path::new("/tmp/a (1).zip"), 700, Some(1000)));
+        assert!(downloads.mark_completed("g-1", Path::new("/tmp/a.zip"), 1000));
+        // Newest first: index 0 is g-2.
+        assert_eq!(downloads.records[0].status, DownloadStatus::InProgress);
+        assert_eq!(downloads.records[0].bytes_downloaded, 700);
+        assert_eq!(downloads.records[1].status, DownloadStatus::Completed);
+        assert_eq!(downloads.records[1].bytes_downloaded, 1000);
+    }
+
+    // The target path is often still empty when a download starts.
+    #[test]
+    fn the_path_arrives_with_a_later_update() {
+        let mut downloads = Downloads::default();
+        downloads.started("g-1", "https://example.com/a.zip", Path::new(""));
+        assert_eq!(downloads.records[0].filename, "https://example.com/a.zip");
+        assert!(downloads.update_progress("g-1", Path::new("/tmp/a.zip"), 1, None));
+        assert_eq!(downloads.records[0].path, "/tmp/a.zip");
+        assert_eq!(downloads.records[0].filename, "a.zip");
     }
 
     #[test]
     fn mark_completed_on_no_match_reports_false() {
         let mut downloads = Downloads::default();
-        assert!(!downloads.mark_completed("https://example.com/x", 0));
+        assert!(!downloads.mark_completed("g-unknown", Path::new(""), 0));
+    }
+
+    // A record from before GUIDs were kept has an empty one; no update
+    // with an empty GUID may land on it.
+    #[test]
+    fn an_empty_guid_matches_no_record() {
+        let mut downloads = Downloads {
+            records: vec![DownloadRecord::started("", "https://example.com/a", Path::new("/tmp/a"))],
+        };
+        assert!(!downloads.mark_completed("", Path::new("/tmp/a"), 1));
     }
 
     #[test]
@@ -344,6 +384,7 @@ mod tests {
         let mut downloads = Downloads {
             records: (0..(MAX_RECORDS + 10) as u64)
                 .map(|i| DownloadRecord {
+                    guid: format!("g-{i}"),
                     url: format!("https://example.com/{i}"),
                     filename: format!("{i}.bin"),
                     path: format!("/tmp/{i}.bin"),
@@ -364,7 +405,7 @@ mod tests {
     #[test]
     fn clear_empties_the_list() {
         let mut downloads = Downloads::default();
-        downloads.started("https://example.com/a.zip", Path::new("/tmp/a.zip"));
+        downloads.started("g-1", "https://example.com/a.zip", Path::new("/tmp/a.zip"));
         downloads.clear();
         assert!(downloads.records.is_empty());
     }

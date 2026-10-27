@@ -120,6 +120,7 @@ pub mod abi {
         weglet_ffi::weglet_omnibox_suggestion_is_bookmark_at;
 
     pub const assess_navigation: unsafe extern "C" fn(
+        *const WegletState,
         *const c_char,
         *mut *mut c_char,
         *mut *mut c_char,
@@ -156,12 +157,15 @@ pub mod abi {
     pub const flush_settings: unsafe extern "C" fn(*mut WegletState) -> bool =
         weglet_ffi::weglet_flush_settings;
 
-    pub const engine_count: extern "C" fn() -> usize = weglet_ffi::weglet_engine_count;
-    pub const engine_id_at: unsafe extern "C" fn(usize) -> *mut c_char =
+    pub const engine_count: unsafe extern "C" fn(*const WegletState) -> usize =
+        weglet_ffi::weglet_engine_count;
+    pub const engine_id_at: unsafe extern "C" fn(*const WegletState, usize) -> *mut c_char =
         weglet_ffi::weglet_engine_id_at;
     pub const set_search_engine: unsafe extern "C" fn(*mut WegletState, *const c_char) -> bool =
         weglet_ffi::weglet_set_search_engine;
 
+    pub const search_engine: unsafe extern "C" fn(*const WegletState) -> *mut c_char =
+        weglet_ffi::weglet_search_engine;
     pub const bookmark_count: unsafe extern "C" fn(*const WegletState) -> usize =
         weglet_ffi::weglet_bookmark_count;
     pub const bookmark_title_at: unsafe extern "C" fn(*const WegletState, usize) -> *mut c_char =
@@ -203,12 +207,25 @@ pub mod abi {
         weglet_ffi::weglet_download_error_message_at;
     pub const download_path_at: unsafe extern "C" fn(*const WegletState, usize) -> *mut c_char =
         weglet_ffi::weglet_download_path_at;
-    pub const download_started: unsafe extern "C" fn(*mut WegletState, *const c_char, *const c_char) =
-        weglet_ffi::weglet_download_started;
-    pub const download_progress: unsafe extern "C" fn(*mut WegletState, *const c_char, u64, i64) =
-        weglet_ffi::weglet_download_progress;
-    pub const download_completed: unsafe extern "C" fn(*mut WegletState, *const c_char, u64) =
-        weglet_ffi::weglet_download_completed;
+    pub const download_started: unsafe extern "C" fn(
+        *mut WegletState,
+        *const c_char,
+        *const c_char,
+        *const c_char,
+    ) = weglet_ffi::weglet_download_started;
+    pub const download_progress: unsafe extern "C" fn(
+        *mut WegletState,
+        *const c_char,
+        *const c_char,
+        u64,
+        i64,
+    ) = weglet_ffi::weglet_download_progress;
+    pub const download_completed: unsafe extern "C" fn(
+        *mut WegletState,
+        *const c_char,
+        *const c_char,
+        u64,
+    ) = weglet_ffi::weglet_download_completed;
     pub const download_failed: unsafe extern "C" fn(*mut WegletState, *const c_char, *const c_char) =
         weglet_ffi::weglet_download_failed;
     pub const clear_download_history: unsafe extern "C" fn(*mut WegletState) =

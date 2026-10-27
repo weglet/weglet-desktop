@@ -1,10 +1,7 @@
 // Copyright 2026 Weglet - Licensed under Apache 2.0
 //
-// weglet_apply_threat_feed installs its parsed hashes into
-// weglet-security's process-global live set (see threat_feed.rs) --
-// exactly the kind of state a test in boundary.rs must not touch, for
-// the same reason blocklist_override.rs is its own file. Kept separate
-// here too.
+// weglet_apply_threat_feed installs the parsed indicators into the
+// profile's own cache, and the profile matches against it.
 
 mod common;
 use common::{abi, c, guard};
@@ -40,7 +37,7 @@ fn a_real_looking_feed_is_applied_and_then_matches() {
         .dir
         .join("Weglet")
         .join("Default")
-        .join("threat-feed.toml")
+        .join("threat-feed.json")
         .exists());
 }
 
@@ -55,7 +52,7 @@ fn a_broken_feed_is_rejected_and_marked_failed_without_erasing_a_good_cache() {
     // Too few indicators to be a real feed.
     assert!(!unsafe { abi::apply_threat_feed(state, c("https://one.example/login\n").as_ptr()) });
     assert!(unsafe { abi::threat_feed_last_update_failed(state) });
-    // The good cache's timestamp -- and the hashes behind it -- stand.
+    // The good cache's timestamp -- and the indicators behind it -- stand.
     assert_eq!(unsafe { abi::threat_feed_updated_at(state) }, good_updated_at);
     assert!(unsafe { abi::is_known_phishing(state, c("https://evil0.example/login").as_ptr(), std::ptr::null_mut(), std::ptr::null_mut()) });
     unsafe { abi::state_free(state) };
@@ -73,4 +70,21 @@ fn disabling_the_feed_stops_it_matching_without_clearing_it() {
     unsafe { abi::set_threat_feed_enabled(state, true) };
     assert!(unsafe { abi::is_known_phishing(state, c("https://evil0.example/login").as_ptr(), std::ptr::null_mut(), std::ptr::null_mut()) });
     unsafe { abi::state_free(state) };
+}
+
+// One process runs several profiles: a feed applied to one must not match
+// in another.
+#[test]
+fn a_feed_applied_to_one_profile_does_not_match_in_another() {
+    let _f = guard("threat-feed-isolated");
+    let applied = abi::state_new();
+    let other = unsafe { abi::state_new_for_profile(c("Work").as_ptr()) };
+    assert!(unsafe { abi::apply_threat_feed(applied, c(&feed_body()).as_ptr()) });
+    let url = c("https://evil0.example/login");
+    assert!(unsafe { abi::is_known_phishing(applied, url.as_ptr(), std::ptr::null_mut(), std::ptr::null_mut()) });
+    assert!(!unsafe { abi::is_known_phishing(other, url.as_ptr(), std::ptr::null_mut(), std::ptr::null_mut()) });
+    unsafe {
+        abi::state_free(applied);
+        abi::state_free(other);
+    }
 }

@@ -109,8 +109,10 @@ class WegletDownloadManagerDelegate : public content::DownloadManagerDelegate,
   // for the lifetime of tests that never call it.
   raw_ptr<WegletBridge> bridge_ = nullptr;
 
-  // The front request is the one whose dialog is open.
+  // The front request is the one whose dialog is open, while
+  // is_dialog_open_ says one is.
   std::deque<DialogRequest> dialog_queue_;
+  bool is_dialog_open_ = false;
   scoped_refptr<ui::SelectFileDialog> select_file_dialog_;
 
   base::WeakPtrFactory<WegletDownloadManagerDelegate> weak_factory_{this};

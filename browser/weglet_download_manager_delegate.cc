@@ -62,9 +62,12 @@ void BindQuarantine(
 
 // A program, a script, a shortcut: anything Windows itself treats as able
 // to run code when opened. Asked of the OS rather than a list kept here,
-// so it stays in step with what the OS will actually execute.
+// so it stays in step with what the OS will actually execute. By extension:
+// AssocIsDangerous takes a file type, and answers false for a full path to
+// an .exe.
 bool CanRunCode(const base::FilePath& path) {
-  return ::AssocIsDangerous(path.value().c_str());
+  const base::FilePath::StringType extension = path.Extension();
+  return !extension.empty() && ::AssocIsDangerous(extension.c_str());
 }
 
 }  // namespace
@@ -168,6 +171,11 @@ void WegletDownloadManagerDelegate::RequestDialog(DialogRequest request) {
 }
 
 void WegletDownloadManagerDelegate::ShowNextDialog() {
+  // One open at a time: a callback run by FinishFrontDialog can queue a
+  // request, and RequestDialog may already have opened it.
+  if (is_dialog_open_) {
+    return;
+  }
   while (!dialog_queue_.empty()) {
     select_file_dialog_ = ui::SelectFileDialog::Create(this, nullptr);
     if (!select_file_dialog_) {
@@ -188,12 +196,16 @@ void WegletDownloadManagerDelegate::ShowNextDialog() {
         request.web_contents ? request.web_contents->GetTopLevelNativeWindow()
                              : gfx::NativeWindow(),
         nullptr);
+    is_dialog_open_ = true;
     return;
   }
 }
 
 void WegletDownloadManagerDelegate::FinishFrontDialog(
     std::optional<base::FilePath> path) {
+  if (dialog_queue_.empty()) {
+    return;
+  }
   DialogRequest request = std::move(dialog_queue_.front());
   dialog_queue_.pop_front();
 
@@ -227,11 +239,13 @@ void WegletDownloadManagerDelegate::FinishFrontDialog(
 
 void WegletDownloadManagerDelegate::FileSelected(const ui::SelectedFileInfo& file,
                                                   int index) {
+  is_dialog_open_ = false;
   FinishFrontDialog(file.path());
   ShowNextDialog();
 }
 
 void WegletDownloadManagerDelegate::FileSelectionCanceled() {
+  is_dialog_open_ = false;
   FinishFrontDialog(std::nullopt);
   ShowNextDialog();
 }

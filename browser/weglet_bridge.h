@@ -178,9 +178,9 @@ class WegletBridge {
                               bool new_document);
   // The model's copy, for a restored tab the engine has not seen yet.
   BackForwardList TabBackForwardList(uint64_t id) const;
+
   void TitleChanged(uint64_t id, const std::string& title);
   void LoadingChanged(uint64_t id, bool loading);
-
 
   // Shortcuts: the pinned sites on the new tab page.
   std::vector<Shortcut> Shortcuts() const;

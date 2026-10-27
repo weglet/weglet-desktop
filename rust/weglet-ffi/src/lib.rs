@@ -522,16 +522,19 @@ pub unsafe extern "C" fn weglet_reorder_tab(
 // Navigation
 // ---------------------------------------------------------------------
 
-// Between the entries of a tab's history as it crosses the boundary. A URL
+// Between the entries of a back/forward list going into the model. A URL
 // the engine reports never contains a raw newline, so the separator cannot
-// occur inside an entry.
+// occur inside an entry. One string rather than one call per entry: the
+// list replaces the tab's copy whole, and a half-sent list would be a tab
+// whose cursor points at an entry that is not there yet.
 const HISTORY_SEPARATOR: char = '\n';
 
 // The engine's back/forward list for a tab, after it changed: every entry
 // oldest first, separated by HISTORY_SEPARATOR, and which one is current.
-// The engine owns the list and does the navigating;
-// the tab keeps a copy for the tab strip and the session. `new_document`
-// is false for a pushState or a fragment change, which keeps the title.
+// The engine owns the list and does the navigating; the tab keeps a copy
+// for the tab strip and the session. An empty entry is dropped and the
+// cursor moved to match. `new_document` is false for a pushState or a
+// fragment change, which keeps the title.
 #[doc = safety_doc!()]
 #[no_mangle]
 pub unsafe extern "C" fn weglet_tab_history_changed(
@@ -552,28 +555,42 @@ pub unsafe extern "C" fn weglet_tab_history_changed(
     if let Some(tab) = state.state.tab_mut(TabId::new(id)) {
         let entries = entries
             .split(HISTORY_SEPARATOR)
-            .filter(|entry| !entry.is_empty())
             .map(str::to_string)
             .collect();
         tab.sync_history(entries, cursor, new_document);
     }
 }
 
-// The tab's back/forward list in weglet_tab_history_changed's form, for
-// handing a restored tab's entries to the engine. Empty for no such tab.
+// The tab's copy of its back/forward list, for handing a restored tab's
+// entries to the engine. 0 for no such tab.
+#[doc = safety_doc!()]
+#[no_mangle]
+pub unsafe extern "C" fn weglet_tab_history_count(state: *const WegletState, id: u64) -> usize {
+    // SAFETY: contract of as_ref.
+    unsafe { as_ref(state) }
+        .and_then(|state| state.state.tab(TabId::new(id)))
+        .map_or(0, |tab| tab.history.entries().len())
+}
+
+// The entry at `index`, oldest first, or an empty string when out of range.
 // Owned by the caller.
 #[doc = safety_doc!()]
 #[no_mangle]
-pub unsafe extern "C" fn weglet_tab_history(state: *const WegletState, id: u64) -> *mut c_char {
+pub unsafe extern "C" fn weglet_tab_history_entry_at(
+    state: *const WegletState,
+    id: u64,
+    index: usize,
+) -> *mut c_char {
     // SAFETY: contract of as_ref.
-    let entries = unsafe { as_ref(state) }
+    let entry = unsafe { as_ref(state) }
         .and_then(|state| state.state.tab(TabId::new(id)))
-        .map(|tab| tab.history.entries().join(&HISTORY_SEPARATOR.to_string()))
+        .and_then(|tab| tab.history.entries().get(index))
+        .cloned()
         .unwrap_or_default();
-    into_c_string(entries)
+    into_c_string(entry)
 }
 
-// Which entry of weglet_tab_history is current. 0 for no such tab.
+// Which of those entries is current. 0 for no such tab.
 #[doc = safety_doc!()]
 #[no_mangle]
 pub unsafe extern "C" fn weglet_tab_history_cursor(state: *const WegletState, id: u64) -> usize {

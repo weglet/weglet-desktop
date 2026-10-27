@@ -114,12 +114,28 @@ fn a_back_forward_list_round_trips_through_the_session() {
     let restored = abi::state_new();
     let w = unsafe { abi::window_id_at(restored, 0) };
     let id = unsafe { abi::active_tab_id(restored, w) };
-    assert_eq!(
-        take(unsafe { abi::tab_history(restored, id) }),
-        "https://a.example\nhttps://b.example\nhttps://c.example"
-    );
+    let entries: Vec<String> = (0..unsafe { abi::tab_history_count(restored, id) })
+        .map(|index| take(unsafe { abi::tab_history_entry_at(restored, id, index) }))
+        .collect();
+    assert_eq!(entries, ["https://a.example", "https://b.example", "https://c.example"]);
     assert_eq!(unsafe { abi::tab_history_cursor(restored, id) }, 1);
     unsafe { abi::state_free(restored) };
+}
+
+// The count and cursor C++ reads back describe the same list: an empty
+// entry is dropped before either is counted.
+#[test]
+fn an_empty_entry_does_not_shift_the_cursor_off_its_page() {
+    let _f = guard("empty-entry");
+    let state = abi::state_new();
+    let w = unsafe { abi::window_id_at(state, 0) };
+    let id = unsafe { abi::active_tab_id(state, w) };
+    let list = c("https://a.example\n\nhttps://c.example");
+    unsafe { abi::tab_history_changed(state, id, list.as_ptr(), 2, true) };
+    assert_eq!(unsafe { abi::tab_history_count(state, id) }, 2);
+    assert_eq!(unsafe { abi::tab_history_cursor(state, id) }, 1);
+    assert_eq!(take(unsafe { abi::tab_url(state, id) }), "https://c.example");
+    unsafe { abi::state_free(state) };
 }
 
 // A pushState changes the URL of the same document: its title stays.

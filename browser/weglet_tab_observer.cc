@@ -31,8 +31,8 @@ void WegletTabObserver::DidFinishNavigation(
     return;
   }
 
-  window_->OnTabBackForwardListChanged(tab_id_,
-                               /*new_document=*/!navigation_handle->IsSameDocument());
+  window_->OnTabBackForwardListChanged(
+      tab_id_, /*new_document=*/!navigation_handle->IsSameDocument());
 }
 
 void WegletTabObserver::NavigationListPruned(

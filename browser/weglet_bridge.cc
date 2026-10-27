@@ -6,7 +6,6 @@
 
 #include "base/check.h"
 #include "base/functional/bind.h"
-#include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "services/network/public/cpp/resource_request.h"
@@ -243,9 +242,12 @@ WegletBridge::BackForwardList WegletBridge::TabBackForwardList(
     uint64_t id) const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   BackForwardList list;
-  list.entries = base::SplitString(TakeString(weglet_tab_history(state_, id)),
-                                   kBackForwardSeparator, base::KEEP_WHITESPACE,
-                                   base::SPLIT_WANT_NONEMPTY);
+  const size_t count = weglet_tab_history_count(state_, id);
+  list.entries.reserve(count);
+  for (size_t index = 0; index < count; ++index) {
+    list.entries.push_back(
+        TakeString(weglet_tab_history_entry_at(state_, id, index)));
+  }
   list.cursor = weglet_tab_history_cursor(state_, id);
   return list;
 }

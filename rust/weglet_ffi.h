@@ -79,9 +79,13 @@ void weglet_tab_history_changed(WegletState* state,
                                 const char* entries,
                                 size_t cursor,
                                 bool new_document);
-// The copy in the same form, for handing a restored tab's entries to the
-// engine. Empty for no such tab.
-char* weglet_tab_history(const WegletState* state, uint64_t id);
+// The model's copy, for handing a restored tab's entries to the engine:
+// how many, each one oldest first (empty when out of range), and which is
+// current. 0 and empty for no such tab.
+size_t weglet_tab_history_count(const WegletState* state, uint64_t id);
+char* weglet_tab_history_entry_at(const WegletState* state,
+                                  uint64_t id,
+                                  size_t index);
 size_t weglet_tab_history_cursor(const WegletState* state, uint64_t id);
 void weglet_tab_title_changed(WegletState* state, uint64_t id, const char* title);
 void weglet_tab_loading_changed(WegletState* state, uint64_t id, bool loading);

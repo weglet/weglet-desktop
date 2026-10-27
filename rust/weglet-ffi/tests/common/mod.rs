@@ -85,8 +85,13 @@ pub mod abi {
         weglet_ffi::weglet_tab_can_go_forward;
     pub const tab_title_changed: unsafe extern "C" fn(*mut WegletState, u64, *const c_char) =
         weglet_ffi::weglet_tab_title_changed;
-    pub const tab_history: unsafe extern "C" fn(*const WegletState, u64) -> *mut c_char =
-        weglet_ffi::weglet_tab_history;
+    pub const tab_history_count: unsafe extern "C" fn(*const WegletState, u64) -> usize =
+        weglet_ffi::weglet_tab_history_count;
+    pub const tab_history_entry_at: unsafe extern "C" fn(
+        *const WegletState,
+        u64,
+        usize,
+    ) -> *mut c_char = weglet_ffi::weglet_tab_history_entry_at;
     pub const tab_history_cursor: unsafe extern "C" fn(*const WegletState, u64) -> usize =
         weglet_ffi::weglet_tab_history_cursor;
 

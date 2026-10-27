@@ -23,8 +23,17 @@ impl History {
     }
 
     // From the engine's list or a restored session. The cursor is clamped,
-    // not trusted: it comes off disk, and out of range would panic.
-    pub fn from_entries(mut entries: Vec<String>, cursor: usize) -> Self {
+    // not trusted: it comes off disk, and out of range would panic. An
+    // empty entry is not a page; it is dropped, and the cursor stays on the
+    // entry it pointed at.
+    pub fn from_entries(entries: Vec<String>, cursor: usize) -> Self {
+        let dropped_before_cursor = entries
+            .iter()
+            .take(cursor)
+            .filter(|entry| entry.is_empty())
+            .count();
+        let cursor = cursor - dropped_before_cursor;
+        let mut entries: Vec<String> = entries.into_iter().filter(|entry| !entry.is_empty()).collect();
         if entries.is_empty() {
             entries.push(crate::BLANK_TAB.to_string());
         }
@@ -95,6 +104,13 @@ mod tests {
     fn an_out_of_range_cursor_is_clamped_rather_than_trusted() {
         let history = at(&["https://a.example", "https://b.example"], 99);
         assert_eq!(history.current(), "https://b.example");
+    }
+
+    #[test]
+    fn an_empty_entry_is_dropped_and_the_cursor_stays_on_its_page() {
+        let history = at(&["https://a.example", "", "https://c.example"], 2);
+        assert_eq!(history.entries(), ["https://a.example", "https://c.example"]);
+        assert_eq!(history.current(), "https://c.example");
     }
 
     #[test]

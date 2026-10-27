@@ -1,10 +1,7 @@
 // Copyright 2026 Weglet - Licensed under Apache 2.0
 //
-// weglet_apply_threat_feed installs its parsed hashes into
-// weglet-security's process-global live set (see threat_feed.rs) --
-// exactly the kind of state a test in boundary.rs must not touch, for
-// the same reason blocklist_override.rs is its own file. Kept separate
-// here too.
+// weglet_apply_threat_feed installs the parsed indicators into the
+// profile's own cache, and the profile matches against it.
 
 mod common;
 use common::{abi, c, guard};
@@ -55,7 +52,7 @@ fn a_broken_feed_is_rejected_and_marked_failed_without_erasing_a_good_cache() {
     // Too few indicators to be a real feed.
     assert!(!unsafe { abi::apply_threat_feed(state, c("https://one.example/login\n").as_ptr()) });
     assert!(unsafe { abi::threat_feed_last_update_failed(state) });
-    // The good cache's timestamp -- and the hashes behind it -- stand.
+    // The good cache's timestamp -- and the indicators behind it -- stand.
     assert_eq!(unsafe { abi::threat_feed_updated_at(state) }, good_updated_at);
     assert!(unsafe { abi::is_known_phishing(state, c("https://evil0.example/login").as_ptr(), std::ptr::null_mut(), std::ptr::null_mut()) });
     unsafe { abi::state_free(state) };

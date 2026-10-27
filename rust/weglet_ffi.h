@@ -206,9 +206,9 @@ void weglet_download_completed(WegletState* state,
 void weglet_download_failed(WegletState* state, const char* guid, const char* message);
 void weglet_clear_download_history(WegletState* state);
 
-// Threat feed: OpenPhish's public feed of known-phishing URLs, kept as
-// hashes -- see weglet-security/src/threat_feed.rs. The fetch itself is
-// the browser process's job; this only parses and matches.
+// Threat feed: OpenPhish's public feed of known-phishing URLs, kept per
+// profile as URL indicators -- see weglet-security/src/threat_feed.rs. The
+// fetch itself is the browser process's job; this only parses and matches.
 bool weglet_threat_feed_enabled(const WegletState* state);
 void weglet_set_threat_feed_enabled(WegletState* state, bool on);
 // Off by default: fetching a site's icon is itself a request to that

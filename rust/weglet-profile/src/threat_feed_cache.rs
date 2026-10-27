@@ -1,8 +1,9 @@
 // Copyright 2026 Weglet - Licensed under Apache 2.0
 //
-// Persisted phishing-feed indicator hashes -- kept separate from
+// Persisted phishing-feed indicators -- kept separate from
 // settings.toml since this is fetched data, not a user preference.
 
+use std::collections::BTreeSet;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -12,7 +13,10 @@ use crate::Error;
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "kebab-case")]
 pub struct ThreatFeedCache {
-    pub hashes: Vec<String>,
+    // Plain URL indicators -- see weglet-security's threat_feed.rs. A cache
+    // written before they were kept as text holds hashes under another key,
+    // which loads as empty until the next refresh.
+    pub indicators: BTreeSet<String>,
     pub source_count: usize,
     // Unix seconds -- 0 means never successfully updated.
     pub updated_at: u64,
@@ -61,7 +65,7 @@ mod tests {
     #[test]
     fn a_missing_file_is_an_empty_cache() {
         let cache = ThreatFeedCache::load(&file("missing")).unwrap();
-        assert!(cache.hashes.is_empty());
+        assert!(cache.indicators.is_empty());
         assert_eq!(cache.updated_at, 0);
         assert!(!cache.last_update_failed);
     }
@@ -70,7 +74,7 @@ mod tests {
     fn a_cache_round_trips_through_disk() {
         let path = file("roundtrip");
         let cache = ThreatFeedCache {
-            hashes: vec!["abc123".to_string(), "def456".to_string()],
+            indicators: ["evil.example|/login".to_string(), "bad.example|/".to_string()].into(),
             source_count: 2,
             updated_at: 1_700_000_000,
             last_update_failed: false,

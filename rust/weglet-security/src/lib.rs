@@ -15,6 +15,5 @@ pub use blocklist::{
 pub use lists::Lists;
 pub use risk::{assess_navigation, NavigationRisk, RiskLevel};
 pub use threat_feed::{
-    is_known_phishing, is_known_phishing_now, parse_feed, set_live_hashes, ParsedFeed,
-    KNOWN_PHISHING_REASON, KNOWN_PHISHING_TITLE,
+    is_known_phishing, parse_feed, ParsedFeed, KNOWN_PHISHING_REASON, KNOWN_PHISHING_TITLE,
 };

@@ -129,7 +129,6 @@ fn build_state(profile: &str) -> WegletState {
         .as_ref()
         .and_then(|paths| ThreatFeedCache::load(&paths.threat_feed_file()).ok())
         .unwrap_or_default();
-    weglet_security::set_live_hashes(threat_feed.hashes.iter().cloned().collect());
 
     WegletState {
         state,
@@ -1539,7 +1538,9 @@ pub unsafe extern "C" fn weglet_is_known_phishing(
     // SAFETY: contract of as_ref and str_from_c.
     let matched = (unsafe { as_ref(state) }).is_some_and(|state| {
         state.settings.threat_feed_enabled
-            && (unsafe { str_from_c(url) }).is_some_and(weglet_security::is_known_phishing_now)
+            && (unsafe { str_from_c(url) }).is_some_and(|url| {
+                weglet_security::is_known_phishing(url, &state.threat_feed.indicators)
+            })
     });
 
     if matched {
@@ -1576,8 +1577,7 @@ pub unsafe extern "C" fn weglet_apply_threat_feed(
         .unwrap_or(0);
     match weglet_security::parse_feed(body) {
         Ok(parsed) => {
-            weglet_security::set_live_hashes(parsed.hashes.clone());
-            state.threat_feed.hashes = parsed.hashes.into_iter().collect();
+            state.threat_feed.indicators = parsed.indicators;
             state.threat_feed.source_count = parsed.source_count;
             state.threat_feed.updated_at = now;
             state.threat_feed.last_update_failed = false;

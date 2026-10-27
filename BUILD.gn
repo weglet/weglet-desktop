@@ -147,6 +147,9 @@ source_set("weglet_lib") {
     "//components/client_hints/browser:in_memory",
     "//components/download/public/common:public",
     "//components/embedder_support:user_agent",
+    # The Mark-of-the-Web on finished downloads -- see
+    # WegletDownloadManagerDelegate::GetQuarantineConnectionCallback.
+    "//components/services/quarantine",
     # Spellcheck -- see WegletSpellCheckHost and
     # WegletContentRendererClient's SpellCheckProvider wiring. Not
     # //components/spellcheck/browser itself -- see the comment by its

@@ -185,14 +185,25 @@ void WegletDownloadManagerDelegate::ShowNextDialog() {
 
     const DialogRequest& request = dialog_queue_.front();
     const bool is_save_package = !request.save_package.is_null();
+    // Never without a file type: the Windows Save As dialog DCHECKs on an
+    // empty filter. Its own extension and "All files", as Chrome's download
+    // dialog offers.
     ui::SelectFileDialog::FileTypeInfo file_types;
-    if (is_save_package) {
-      file_types.extensions = {{request.default_extension}};
+    file_types.include_all_files = true;
+    base::FilePath::StringType default_extension = request.default_extension;
+    if (!is_save_package) {
+      default_extension = request.suggested_path.FinalExtension();
+      if (!default_extension.empty()) {
+        default_extension.erase(0, 1);
+      }
+    }
+    if (!default_extension.empty()) {
+      file_types.extensions = {{default_extension}};
     }
     select_file_dialog_->SelectFile(
         ui::SelectFileDialog::SELECT_SAVEAS_FILE, std::u16string(),
-        request.suggested_path, is_save_package ? &file_types : nullptr,
-        /*file_type_index=*/is_save_package ? 1 : 0, request.default_extension,
+        request.suggested_path, &file_types,
+        /*file_type_index=*/1, default_extension,
         request.web_contents ? request.web_contents->GetTopLevelNativeWindow()
                              : gfx::NativeWindow(),
         nullptr);

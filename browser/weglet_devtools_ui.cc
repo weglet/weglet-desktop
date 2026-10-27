@@ -84,8 +84,11 @@ class DevToolsDataSource : public content::URLDataSource {
     return MimeTypeFor(url.path());
   }
 
-  // Chrome's own policy for the bundled front-end, without the remote
-  // script origin it allows for a front-end fetched from a server.
+  // Chrome's own policy for the bundled front-end
+  // (DevToolsDataSource::GetContentSecurityPolicy), without the remote
+  // script origin it allows for a front-end fetched from a server. The
+  // other directives stay empty as there: the front-end does not run under
+  // the Trusted Types the base class requires. Nothing frames it.
   std::string GetContentSecurityPolicy(
       network::mojom::CSPDirectiveName directive) override {
     switch (directive) {
@@ -93,6 +96,8 @@ class DevToolsDataSource : public content::URLDataSource {
         return "object-src 'none';";
       case network::mojom::CSPDirectiveName::ScriptSrc:
         return "script-src 'self';";
+      case network::mojom::CSPDirectiveName::FrameAncestors:
+        return "frame-ancestors 'none';";
       default:
         return std::string();
     }

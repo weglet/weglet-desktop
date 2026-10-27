@@ -132,9 +132,11 @@ void WegletDevToolsBindings::ReadyToCommitNavigation(
   content::RenderFrameHost* frame = navigation_handle->GetRenderFrameHost();
   if (navigation_handle->IsInPrimaryMainFrame()) {
     // The front-end is an ordinary tab, and its address bar can take it
-    // anywhere. Only the front-end's own origin gets the channel: on any
+    // anywhere. Only the front-end page itself gets the channel: on any
     // other page it would be a protocol connection to the inspected tab.
-    if (!IsDevToolsFrontend(navigation_handle->GetURL())) {
+    // The whole URL, not just the origin: a parameter such as ws= points
+    // the front-end at a backend somewhere else.
+    if (navigation_handle->GetURL() != DevToolsFrontendUrl()) {
       frontend_host_.reset();
       if (agent_host_) {
         agent_host_->DetachClient(this);

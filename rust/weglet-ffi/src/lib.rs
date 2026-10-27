@@ -304,8 +304,7 @@ pub unsafe extern "C" fn weglet_window_count(state: *const WegletState) -> usize
     unsafe { as_ref(state) }.map_or(0, |state| state.state.windows().len())
 }
 
-// The id at `index`, or 0 when out of range. Ids start at 0, so callers
-// read the count first.
+// The id at `index`, or 0 when out of range.
 #[doc = safety_doc!()]
 #[no_mangle]
 pub unsafe extern "C" fn weglet_window_id_at(state: *const WegletState, index: usize) -> u64 {
@@ -335,8 +334,7 @@ pub unsafe extern "C" fn weglet_close_window(state: *mut WegletState, window: u6
         .is_some_and(|state| state.state.close_window(WindowId::new(window)))
 }
 
-// Which window a tab is in. 0 is a real window id, so ask about the tab
-// first to tell it from "no such tab".
+// Which window a tab is in, or 0 for no such tab.
 #[doc = safety_doc!()]
 #[no_mangle]
 pub unsafe extern "C" fn weglet_tab_window(state: *const WegletState, id: u64) -> u64 {
@@ -359,8 +357,7 @@ pub unsafe extern "C" fn weglet_tab_count(state: *const WegletState, window: u64
     })
 }
 
-// The id at `index`, or 0 if out of range. Ids start at 0, so callers
-// check weglet_tab_count first.
+// The id at `index`, or 0 if out of range.
 #[doc = safety_doc!()]
 #[no_mangle]
 pub unsafe extern "C" fn weglet_tab_id_at(

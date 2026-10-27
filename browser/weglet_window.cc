@@ -838,7 +838,7 @@ void WegletWindow::DismissSecurityNotice(content::WebContents* contents) {
   // The throttle cancelled the navigation rather than committing an error
   // page, so this is the page the user was on before.
   const uint64_t id = TabIdFor(contents);
-  if (id == 0 && contents != nullptr) {
+  if (id == 0 || contents == nullptr) {
     return;
   }
   const std::string url = bridge_->GoBack(id);
@@ -1280,8 +1280,7 @@ bool WegletWindow::HandleContextMenu(content::RenderFrameHost& render_frame_host
   content::WebContents* source_contents =
       content::WebContents::FromRenderFrameHost(&render_frame_host);
   // The toolbar and our own popups have no business showing this -- every
-  // other WebContents naming `this` as delegate is a real tab. Not
-  // TabIdFor(): a tab's id can legitimately be 0.
+  // other WebContents naming `this` as delegate is a real tab.
   if (!source_contents || source_contents == toolbar_contents_.get()) {
     return false;
   }

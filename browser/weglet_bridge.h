@@ -144,8 +144,7 @@ class WegletBridge {
   // 0 when the window ceiling is reached.
   uint64_t OpenWindow();
   bool CloseWindow(uint64_t window);
-  // Which window a tab is in. 0 is a real id, so ask about the tab first
-  // to tell it from "no such tab".
+  // Which window a tab is in, or 0 for no such tab.
   uint64_t TabWindow(uint64_t id) const;
 
   // Tabs, within one window. An id is global once you have it.

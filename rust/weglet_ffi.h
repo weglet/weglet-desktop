@@ -35,15 +35,15 @@ void weglet_string_free(char* value);
 
 // Windows.
 //
-// Every tab question below takes the window it is about.
+// Every tab question below takes the window it is about. Tab and window
+// ids start at 1, so 0 always means "no such tab or window".
 size_t weglet_window_count(const WegletState* state);
 uint64_t weglet_window_id_at(const WegletState* state, size_t index);
 // The new window's id, or 0 at the ceiling. Starts with one blank tab.
 uint64_t weglet_open_window(WegletState* state);
 // Its tabs go with it. Closing the last window leaves a fresh one.
 bool weglet_close_window(WegletState* state, uint64_t window);
-// Which window a tab is in. 0 is a real id, so ask about the tab first to
-// tell it from "no such tab".
+// Which window a tab is in, or 0 for no such tab.
 uint64_t weglet_tab_window(const WegletState* state, uint64_t id);
 
 // Tabs. Scoped to one window; `id` is global once you have it.

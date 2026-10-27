@@ -301,6 +301,7 @@ WegletWindow::~WegletWindow() {
     page_view_ = nullptr;
   }
   contents_view_ = nullptr;
+  frame_view_ = nullptr;
   widget_.reset();
 
   // Observers before contents: an observer's destructor touches the
@@ -1080,7 +1081,7 @@ void WegletWindow::HideMenu() {
 }
 
 void WegletWindow::HandleContextMenuAction(const std::string& id) {
-  content::WebContents* target = pending_context_menu_contents_;
+  content::WebContents* target = pending_context_menu_contents_.get();
   const GURL link_url = pending_context_menu_link_;
   const gfx::Point point = pending_context_menu_point_;
   const std::vector<std::u16string> suggestions =
@@ -1137,7 +1138,7 @@ void WegletWindow::HandleContextMenuAction(const std::string& id) {
 }
 
 void WegletWindow::HideContextMenu() {
-  pending_context_menu_contents_ = nullptr;
+  pending_context_menu_contents_.reset();
   pending_context_menu_link_ = GURL();
   pending_context_menu_point_ = gfx::Point();
   pending_context_menu_suggestions_.clear();
@@ -1331,7 +1332,7 @@ bool WegletWindow::HandleContextMenu(content::RenderFrameHost& render_frame_host
     screen_point += view->GetViewBounds().OffsetFromOrigin();
   }
 
-  pending_context_menu_contents_ = source_contents;
+  pending_context_menu_contents_ = source_contents->GetWeakPtr();
   pending_context_menu_link_ = params.link_url;
   pending_context_menu_point_ = gfx::Point(params.x, params.y);
   pending_context_menu_screen_point_ = screen_point;

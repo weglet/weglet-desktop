@@ -402,8 +402,9 @@ class WegletWindow : public views::WidgetDelegate,
   std::map<uint64_t, Tab> tabs_;
 
   // What the open context menu acts on -- the tab it was opened over, and
-  // the link under the cursor if any. Cleared on hide.
-  raw_ptr<content::WebContents> pending_context_menu_contents_ = nullptr;
+  // the link under the cursor if any. Cleared on hide. Weak: the tab can
+  // close while the menu is open, from window.close() for one.
+  base::WeakPtr<content::WebContents> pending_context_menu_contents_;
   GURL pending_context_menu_link_;
   gfx::Point pending_context_menu_point_;
   gfx::Point pending_context_menu_screen_point_;

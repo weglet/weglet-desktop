@@ -3,6 +3,7 @@
 // The profile's settings: search engines, shortcuts, block list, theme.
 
 use std::path::Path;
+use std::sync::OnceLock;
 
 use serde::{Deserialize, Serialize};
 
@@ -66,9 +67,13 @@ pub struct Engines(Vec<Engine>);
 
 impl Engines {
     // The built-in file is checked by a test in this crate, so a malformed
-    // one fails the build rather than the browser.
+    // one fails the build rather than the browser. Parsed once: every
+    // Settings::default() asks for its first engine.
     pub fn built_in() -> Self {
-        Self(parse_engines(BUILT_IN_ENGINES).unwrap_or_default())
+        static BUILT_IN: OnceLock<Engines> = OnceLock::new();
+        BUILT_IN
+            .get_or_init(|| Self(parse_engines(BUILT_IN_ENGINES).unwrap_or_default()))
+            .clone()
     }
 
     // A table read from the profile. Rejected whole if anything in it is

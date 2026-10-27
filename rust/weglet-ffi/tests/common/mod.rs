@@ -72,10 +72,23 @@ pub mod abi {
         weglet_ffi::weglet_open_tab;
     pub const close_tab: unsafe extern "C" fn(*mut WegletState, u64) -> bool =
         weglet_ffi::weglet_close_tab;
-    pub const tab_navigated: unsafe extern "C" fn(*mut WegletState, u64, *const c_char) =
-        weglet_ffi::weglet_tab_navigated;
-    pub const tab_go_back: unsafe extern "C" fn(*mut WegletState, u64) -> *mut c_char =
-        weglet_ffi::weglet_tab_go_back;
+    pub const tab_history_changed: unsafe extern "C" fn(
+        *mut WegletState,
+        u64,
+        *const c_char,
+        usize,
+        bool,
+    ) = weglet_ffi::weglet_tab_history_changed;
+    pub const tab_can_go_back: unsafe extern "C" fn(*const WegletState, u64) -> bool =
+        weglet_ffi::weglet_tab_can_go_back;
+    pub const tab_can_go_forward: unsafe extern "C" fn(*const WegletState, u64) -> bool =
+        weglet_ffi::weglet_tab_can_go_forward;
+    pub const tab_title_changed: unsafe extern "C" fn(*mut WegletState, u64, *const c_char) =
+        weglet_ffi::weglet_tab_title_changed;
+    pub const tab_history: unsafe extern "C" fn(*const WegletState, u64) -> *mut c_char =
+        weglet_ffi::weglet_tab_history;
+    pub const tab_history_cursor: unsafe extern "C" fn(*const WegletState, u64) -> usize =
+        weglet_ffi::weglet_tab_history_cursor;
 
     pub const omnibox_resolve: unsafe extern "C" fn(
         *const WegletState,
@@ -260,4 +273,11 @@ pub fn take(raw: *mut c_char) -> String {
 #[allow(dead_code)]
 pub fn c(value: &str) -> CString {
     CString::new(value).unwrap()
+}
+
+// What the browser reports after a page commits in tab `id`: the engine's
+// back/forward list, here one entry long, with `url` current.
+#[allow(dead_code)]
+pub fn navigate(state: *mut weglet_ffi::WegletState, id: u64, url: &str) {
+    unsafe { abi::tab_history_changed(state, id, c(url).as_ptr(), 0, true) };
 }

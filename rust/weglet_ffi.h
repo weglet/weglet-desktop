@@ -68,12 +68,21 @@ void weglet_cycle_tab(WegletState* state, uint64_t window, bool forward);
 bool weglet_activate_tab_at(WegletState* state, uint64_t window, size_t position);
 bool weglet_reorder_tab(WegletState* state, uint64_t id, size_t target);
 
-// Navigation. `navigated` adds a history entry; `url_replaced` is for a
-// redirect or history.replaceState and does not.
-void weglet_tab_navigated(WegletState* state, uint64_t id, const char* url);
-void weglet_tab_url_replaced(WegletState* state, uint64_t id, const char* url);
-char* weglet_tab_go_back(WegletState* state, uint64_t id);
-char* weglet_tab_go_forward(WegletState* state, uint64_t id);
+// Navigation. The engine owns each tab's back/forward list and does the
+// navigating; the model keeps a copy for the tab strip and the session.
+// `entries` is every entry, oldest first, separated by '\n' -- a URL the
+// engine reports never contains a raw newline -- and `cursor` is which one
+// is current. `new_document` is false for a pushState or a fragment
+// change, which keeps the title.
+void weglet_tab_history_changed(WegletState* state,
+                                uint64_t id,
+                                const char* entries,
+                                size_t cursor,
+                                bool new_document);
+// The copy in the same form, for handing a restored tab's entries to the
+// engine. Empty for no such tab.
+char* weglet_tab_history(const WegletState* state, uint64_t id);
+size_t weglet_tab_history_cursor(const WegletState* state, uint64_t id);
 void weglet_tab_title_changed(WegletState* state, uint64_t id, const char* title);
 void weglet_tab_loading_changed(WegletState* state, uint64_t id, bool loading);
 

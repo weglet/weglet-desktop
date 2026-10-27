@@ -44,6 +44,12 @@ Five crates, layered by what each one is allowed to know:
   no platform, no knowledge that a browser process or a renderer exists.
   This is what makes `cargo test` from `weglet/rust/` a complete test of
   the tab and window model without a display or a browser running.
+  A tab's back/forward list is the one exception to "Rust decides": the
+  engine's own navigation controller owns it and does the navigating, so
+  Back gets the page cache, the scroll position and the form state, and
+  a page's `history.back()` and the Back button walk the same list. The
+  tab keeps a copy, updated after every commit, for the tab strip and the
+  session, and a restored tab hands its copy back to the engine.
 - **`weglet-security`** -- the phishing/impersonation heuristics and the
   ad/tracker blocklist. Advisory: nothing else depends on it being right,
   and its false-positive/false-negative rates are measured against a

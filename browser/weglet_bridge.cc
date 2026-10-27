@@ -6,6 +6,8 @@
 
 #include "base/check.h"
 #include "base/functional/bind.h"
+#include "base/strings/string_split.h"
+#include "base/strings/string_util.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "services/network/public/cpp/resource_request.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
@@ -218,14 +220,34 @@ bool WegletBridge::ReorderTab(uint64_t id, size_t target) {
   return weglet_reorder_tab(state_, id, target);
 }
 
-void WegletBridge::Navigated(uint64_t id, const GURL& url) {
+WegletBridge::BackForwardList::BackForwardList() = default;
+WegletBridge::BackForwardList::BackForwardList(const BackForwardList&) = default;
+WegletBridge::BackForwardList& WegletBridge::BackForwardList::operator=(
+    const BackForwardList&) = default;
+WegletBridge::BackForwardList::~BackForwardList() = default;
+
+// The separator weglet_ffi.h gives for a back/forward list.
+constexpr char kBackForwardSeparator[] = "\n";
+
+void WegletBridge::BackForwardListChanged(uint64_t id,
+                                          const BackForwardList& list,
+                                          bool new_document) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  weglet_tab_navigated(state_, id, url.spec().c_str());
+  const std::string entries =
+      base::JoinString(list.entries, kBackForwardSeparator);
+  weglet_tab_history_changed(state_, id, entries.c_str(), list.cursor,
+                             new_document);
 }
 
-void WegletBridge::UrlReplaced(uint64_t id, const GURL& url) {
+WegletBridge::BackForwardList WegletBridge::TabBackForwardList(
+    uint64_t id) const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  weglet_tab_url_replaced(state_, id, url.spec().c_str());
+  BackForwardList list;
+  list.entries = base::SplitString(TakeString(weglet_tab_history(state_, id)),
+                                   kBackForwardSeparator, base::KEEP_WHITESPACE,
+                                   base::SPLIT_WANT_NONEMPTY);
+  list.cursor = weglet_tab_history_cursor(state_, id);
+  return list;
 }
 
 void WegletBridge::TitleChanged(uint64_t id, const std::string& title) {
@@ -236,16 +258,6 @@ void WegletBridge::TitleChanged(uint64_t id, const std::string& title) {
 void WegletBridge::LoadingChanged(uint64_t id, bool loading) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   weglet_tab_loading_changed(state_, id, loading);
-}
-
-std::string WegletBridge::GoBack(uint64_t id) {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  return TakeString(weglet_tab_go_back(state_, id));
-}
-
-std::string WegletBridge::GoForward(uint64_t id) {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  return TakeString(weglet_tab_go_forward(state_, id));
 }
 
 std::vector<WegletBridge::Shortcut> WegletBridge::Shortcuts() const {

@@ -5,6 +5,7 @@
 #include "weglet/browser/weglet_window.h"
 
 #include <algorithm>
+#include <optional>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -29,11 +30,15 @@
 #include "content/public/browser/context_menu_params.h"
 #include "content/public/browser/media_capture_devices.h"
 #include "content/public/browser/navigation_controller.h"
+#include "content/public/browser/navigation_entry.h"
+#include "content/public/browser/restore_type.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_widget_host.h"
 #include "content/public/browser/render_widget_host_view.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/stop_find_action.h"
+#include "content/public/common/referrer.h"
 #include "content/public/common/url_constants.h"
 #include "content/public/browser/web_contents_user_data.h"
 #include "content/public/browser/web_ui.h"
@@ -609,10 +614,31 @@ content::WebContents* WegletWindow::EnsureContentsFor(uint64_t id) {
 
   // Not checked here: a restored URL may have been blocked since the
   // session was written, but the throttle sees it like any other navigation.
-  content::NavigationController::LoadURLParams load(
-      ResolveForEngine(bridge_->TabUrl(id)));
-  load.transition_type = ui::PAGE_TRANSITION_AUTO_TOPLEVEL;
-  contents->GetController().LoadURLWithParams(load);
+  const WegletBridge::BackForwardList history = bridge_->TabBackForwardList(id);
+  if (history.entries.size() <= 1) {
+    content::NavigationController::LoadURLParams load(
+        ResolveForEngine(bridge_->TabUrl(id)));
+    load.transition_type = ui::PAGE_TRANSITION_AUTO_TOPLEVEL;
+    contents->GetController().LoadURLWithParams(load);
+    return contents;
+  }
+
+  // A restored tab gets its whole back/forward list, so Back works in it
+  // the way it did before the restart.
+  std::vector<std::unique_ptr<content::NavigationEntry>> entries;
+  entries.reserve(history.entries.size());
+  for (const std::string& address : history.entries) {
+    entries.push_back(content::NavigationController::CreateNavigationEntry(
+        ResolveForEngine(address), content::Referrer(),
+        /*initiator_origin=*/std::nullopt, /*initiator_base_url=*/std::nullopt,
+        ui::PAGE_TRANSITION_RELOAD, /*is_renderer_initiated=*/false,
+        /*extra_headers=*/std::string(), browser_context_,
+        /*blob_url_loader_factory=*/nullptr));
+  }
+  content::NavigationController& controller = contents->GetController();
+  controller.Restore(static_cast<int>(history.cursor),
+                     content::RestoreType::kRestored, &entries);
+  controller.LoadIfNecessary();
   return contents;
 }
 
@@ -760,30 +786,21 @@ void WegletWindow::ShowOmniboxSuggestionsPopup() {
                                    omnibox_anchor_left_, omnibox_anchor_bottom_);
 }
 
+// The engine's own Back and Forward: the page comes out of the back/forward
+// cache with its scroll position and form state when it can, and a page
+// that was a POST result is not silently fetched again as a GET.
 void WegletWindow::GoBack() {
-  const uint64_t id = bridge_->ActiveTabId(window_id_);
-  const std::string url = bridge_->GoBack(id);
-  if (url.empty()) {
-    return;
+  content::WebContents* contents = ActiveTabContents();
+  if (contents && contents->GetController().CanGoBack()) {
+    contents->GetController().GoBack();
   }
-  content::WebContents* contents = EnsureContentsFor(id);
-  content::NavigationController::LoadURLParams load(ResolveForEngine(url));
-  load.transition_type = ui::PAGE_TRANSITION_FORWARD_BACK;
-  contents->GetController().LoadURLWithParams(load);
-  Notify();
 }
 
 void WegletWindow::GoForward() {
-  const uint64_t id = bridge_->ActiveTabId(window_id_);
-  const std::string url = bridge_->GoForward(id);
-  if (url.empty()) {
-    return;
+  content::WebContents* contents = ActiveTabContents();
+  if (contents && contents->GetController().CanGoForward()) {
+    contents->GetController().GoForward();
   }
-  content::WebContents* contents = EnsureContentsFor(id);
-  content::NavigationController::LoadURLParams load(ResolveForEngine(url));
-  load.transition_type = ui::PAGE_TRANSITION_FORWARD_BACK;
-  contents->GetController().LoadURLWithParams(load);
-  Notify();
 }
 
 void WegletWindow::Reload() {
@@ -862,18 +879,19 @@ void WegletWindow::DismissSecurityNotice(content::WebContents* contents) {
   if (security_guard_) {
     security_guard_->ClearPendingNotice(contents);
   }
-  // The throttle cancelled the navigation rather than committing an error
-  // page, so this is the page the user was on before.
-  const uint64_t id = TabIdFor(contents);
-  if (id == 0 || contents == nullptr) {
+  if (TabIdFor(contents) == 0 || contents == nullptr) {
     return;
   }
-  const std::string url = bridge_->GoBack(id);
-  content::NavigationController::LoadURLParams load(
-      url.empty() ? GURL(url::kAboutBlankURL) : ResolveForEngine(url));
+  // The throttle cancelled the navigation rather than committing an error
+  // page, so the entry before the notice is the page the user was on.
+  content::NavigationController& controller = contents->GetController();
+  if (controller.CanGoBack()) {
+    controller.GoBack();
+    return;
+  }
+  content::NavigationController::LoadURLParams load{GURL(url::kAboutBlankURL)};
   load.transition_type = ui::PAGE_TRANSITION_AUTO_TOPLEVEL;
-  contents->GetController().LoadURLWithParams(load);
-  Notify();
+  controller.LoadURLWithParams(load);
 }
 
 void WegletWindow::OpenSaveShortcutPopup(int anchor_right, int anchor_bottom) {
@@ -1230,16 +1248,30 @@ void WegletWindow::Notify() {
   }
 }
 
-void WegletWindow::OnTabNavigated(uint64_t id,
-                                  const GURL& url,
-                                  bool same_document) {
-  // pushState or a fragment change: the engine already owns that history
-  // entry.
-  if (same_document) {
-    bridge_->UrlReplaced(id, url);
-  } else {
-    bridge_->Navigated(id, url);
+void WegletWindow::OnTabBackForwardListChanged(uint64_t id, bool new_document) {
+  auto found = tabs_.find(id);
+  if (found == tabs_.end()) {
+    return;
   }
+  content::NavigationController& controller =
+      found->second.contents->GetController();
+  WegletBridge::BackForwardList history;
+  for (int index = 0; index < controller.GetEntryCount(); ++index) {
+    content::NavigationEntry* entry = controller.GetEntryAtIndex(index);
+    // The placeholder a WebContents holds before its first navigation
+    // commits is not a page the user was on.
+    if (entry->IsInitialEntry()) {
+      continue;
+    }
+    if (index == controller.GetLastCommittedEntryIndex()) {
+      history.cursor = history.entries.size();
+    }
+    history.entries.push_back(entry->GetURL().spec());
+  }
+  if (history.entries.empty()) {
+    return;
+  }
+  bridge_->BackForwardListChanged(id, history, new_document);
   Notify();
 }
 

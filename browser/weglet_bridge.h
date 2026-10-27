@@ -161,15 +161,26 @@ class WegletBridge {
   bool ActivateTabAt(uint64_t window, size_t position);
   bool ReorderTab(uint64_t id, size_t target);
 
-  // UrlReplaced is for a redirect: no history entry, so Back skips it.
-  void Navigated(uint64_t id, const GURL& url);
-  void UrlReplaced(uint64_t id, const GURL& url);
+  // The engine's back/forward list for a tab, after it changed. The engine
+  // owns it; the model keeps a copy for the tab strip and the session.
+  // `new_document` is false for a pushState or a fragment change.
+  struct BackForwardList {
+    BackForwardList();
+    BackForwardList(const BackForwardList&);
+    BackForwardList& operator=(const BackForwardList&);
+    ~BackForwardList();
+
+    std::vector<std::string> entries;
+    size_t cursor = 0;
+  };
+  void BackForwardListChanged(uint64_t id,
+                              const BackForwardList& list,
+                              bool new_document);
+  // The model's copy, for a restored tab the engine has not seen yet.
+  BackForwardList TabBackForwardList(uint64_t id) const;
   void TitleChanged(uint64_t id, const std::string& title);
   void LoadingChanged(uint64_t id, bool loading);
 
-  // Empty when there is nowhere to go.
-  std::string GoBack(uint64_t id);
-  std::string GoForward(uint64_t id);
 
   // Shortcuts: the pinned sites on the new tab page.
   std::vector<Shortcut> Shortcuts() const;

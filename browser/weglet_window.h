@@ -216,7 +216,10 @@ class WegletWindow : public views::WidgetDelegate,
   void RegisterWebContents(content::WebContents* contents);
 
   // Called by the per-tab observer when the engine reports a change.
-  void OnTabNavigated(uint64_t id, const GURL& url, bool same_document);
+  // The engine's back/forward list for tab `id` changed: a navigation
+  // committed, or entries were dropped. `new_document` is false for a
+  // pushState or a fragment change.
+  void OnTabBackForwardListChanged(uint64_t id, bool new_document);
   void OnTabTitleChanged(uint64_t id, const std::string& title);
   void OnTabLoadingChanged(uint64_t id, bool loading);
 

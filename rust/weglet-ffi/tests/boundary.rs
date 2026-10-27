@@ -12,7 +12,7 @@
 // why.
 
 mod common;
-use common::{abi, c, guard, take};
+use common::{abi, c, guard, navigate, take};
 
 #[test]
 fn a_fresh_state_has_one_blank_tab() {
@@ -38,12 +38,11 @@ fn tabs_open_navigate_and_close() {
     assert_eq!(unsafe { abi::tab_count(state, w) }, 2);
     assert_eq!(unsafe { abi::active_tab_id(state, w) }, id);
 
-    unsafe { abi::tab_navigated(state, id, c("https://b.example").as_ptr()) };
+    let list = c("https://a.example\nhttps://b.example");
+    unsafe { abi::tab_history_changed(state, id, list.as_ptr(), 1, true) };
     assert_eq!(take(unsafe { abi::tab_url(state, id) }), "https://b.example");
-    assert_eq!(
-        take(unsafe { abi::tab_go_back(state, id) }),
-        "https://a.example"
-    );
+    assert!(unsafe { abi::tab_can_go_back(state, id) });
+    assert!(!unsafe { abi::tab_can_go_forward(state, id) });
 
     assert!(unsafe { abi::close_tab(state, id) });
     assert_eq!(unsafe { abi::tab_count(state, w) }, 1);
@@ -58,7 +57,7 @@ fn closing_the_last_window_keeps_its_tabs_for_the_next_launch() {
     let state = abi::state_new();
     let w = unsafe { abi::window_id_at(state, 0) };
     let id = unsafe { abi::active_tab_id(state, w) };
-    unsafe { abi::tab_navigated(state, id, c("https://a.example").as_ptr()) };
+    navigate(state, id, "https://a.example");
     assert!(unsafe { abi::close_window(state, w) });
     assert!(unsafe { abi::save_session(state) });
     unsafe { abi::state_free(state) };
@@ -76,12 +75,12 @@ fn a_window_opened_after_the_last_one_closed_is_what_gets_saved() {
     let state = abi::state_new();
     let w = unsafe { abi::window_id_at(state, 0) };
     let id = unsafe { abi::active_tab_id(state, w) };
-    unsafe { abi::tab_navigated(state, id, c("https://a.example").as_ptr()) };
+    navigate(state, id, "https://a.example");
     assert!(unsafe { abi::close_window(state, w) });
 
     let reopened = unsafe { abi::open_window(state) };
     let id = unsafe { abi::active_tab_id(state, reopened) };
-    unsafe { abi::tab_navigated(state, id, c("https://b.example").as_ptr()) };
+    navigate(state, id, "https://b.example");
     assert!(unsafe { abi::save_session(state) });
     unsafe { abi::state_free(state) };
 
@@ -97,6 +96,45 @@ fn a_window_opened_after_the_last_one_closed_is_what_gets_saved() {
     assert!(urls.contains(&"https://b.example".to_string()), "{urls:?}");
     assert!(!urls.contains(&"https://a.example".to_string()), "{urls:?}");
     unsafe { abi::state_free(restored) };
+}
+
+// A restored tab hands its whole list to the engine, and Back in it goes
+// where it went before the restart.
+#[test]
+fn a_back_forward_list_round_trips_through_the_session() {
+    let _f = guard("back-forward");
+    let state = abi::state_new();
+    let w = unsafe { abi::window_id_at(state, 0) };
+    let id = unsafe { abi::active_tab_id(state, w) };
+    let list = c("https://a.example\nhttps://b.example\nhttps://c.example");
+    unsafe { abi::tab_history_changed(state, id, list.as_ptr(), 1, true) };
+    assert!(unsafe { abi::save_session(state) });
+    unsafe { abi::state_free(state) };
+
+    let restored = abi::state_new();
+    let w = unsafe { abi::window_id_at(restored, 0) };
+    let id = unsafe { abi::active_tab_id(restored, w) };
+    assert_eq!(
+        take(unsafe { abi::tab_history(restored, id) }),
+        "https://a.example\nhttps://b.example\nhttps://c.example"
+    );
+    assert_eq!(unsafe { abi::tab_history_cursor(restored, id) }, 1);
+    unsafe { abi::state_free(restored) };
+}
+
+// A pushState changes the URL of the same document: its title stays.
+#[test]
+fn a_same_document_change_keeps_the_tab_title() {
+    let _f = guard("same-document");
+    let state = abi::state_new();
+    let w = unsafe { abi::window_id_at(state, 0) };
+    let id = unsafe { abi::active_tab_id(state, w) };
+    navigate(state, id, "https://a.example");
+    unsafe { abi::tab_title_changed(state, id, c("Page A").as_ptr()) };
+    let list = c("https://a.example\nhttps://a.example/#b");
+    unsafe { abi::tab_history_changed(state, id, list.as_ptr(), 1, false) };
+    assert_eq!(take(unsafe { abi::tab_label(state, id) }), "Page A");
+    unsafe { abi::state_free(state) };
 }
 
 // Every one of these would be a read past the end if the entry point

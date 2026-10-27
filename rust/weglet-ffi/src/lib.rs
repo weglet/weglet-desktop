@@ -522,73 +522,65 @@ pub unsafe extern "C" fn weglet_reorder_tab(
 // Navigation
 // ---------------------------------------------------------------------
 
-// A new navigation: adds a history entry and drops the forward branch.
+// Between the entries of a tab's history as it crosses the boundary. A URL
+// the engine reports never contains a raw newline, so the separator cannot
+// occur inside an entry.
+const HISTORY_SEPARATOR: char = '\n';
+
+// The engine's back/forward list for a tab, after it changed: every entry
+// oldest first, separated by HISTORY_SEPARATOR, and which one is current.
+// The engine owns the list and does the navigating;
+// the tab keeps a copy for the tab strip and the session. `new_document`
+// is false for a pushState or a fragment change, which keeps the title.
 #[doc = safety_doc!()]
 #[no_mangle]
-pub unsafe extern "C" fn weglet_tab_navigated(
+pub unsafe extern "C" fn weglet_tab_history_changed(
     state: *mut WegletState,
     id: u64,
-    url: *const c_char,
+    entries: *const c_char,
+    cursor: usize,
+    new_document: bool,
 ) {
-    // SAFETY: contract of as_mut and str_from_c.
+    // SAFETY: contract of as_mut.
     let Some(state) = (unsafe { as_mut(state) }) else {
         return;
     };
     // SAFETY: contract of str_from_c.
-    let Some(url) = (unsafe { str_from_c(url) }) else {
+    let Some(entries) = (unsafe { str_from_c(entries) }) else {
         return;
     };
     if let Some(tab) = state.state.tab_mut(TabId::new(id)) {
-        tab.navigate(url.to_string());
+        let entries = entries
+            .split(HISTORY_SEPARATOR)
+            .filter(|entry| !entry.is_empty())
+            .map(str::to_string)
+            .collect();
+        tab.sync_history(entries, cursor, new_document);
     }
 }
 
-// A redirect, or history.replaceState: the same entry, a different URL.
-// Adding an entry here would make Back land on the page that redirected.
+// The tab's back/forward list in weglet_tab_history_changed's form, for
+// handing a restored tab's entries to the engine. Empty for no such tab.
+// Owned by the caller.
 #[doc = safety_doc!()]
 #[no_mangle]
-pub unsafe extern "C" fn weglet_tab_url_replaced(
-    state: *mut WegletState,
-    id: u64,
-    url: *const c_char,
-) {
-    // SAFETY: contract of as_mut and str_from_c.
-    let Some(state) = (unsafe { as_mut(state) }) else {
-        return;
-    };
-    // SAFETY: contract of str_from_c.
-    let Some(url) = (unsafe { str_from_c(url) }) else {
-        return;
-    };
-    if let Some(tab) = state.state.tab_mut(TabId::new(id)) {
-        tab.history.replace_current(url.to_string());
-    }
+pub unsafe extern "C" fn weglet_tab_history(state: *const WegletState, id: u64) -> *mut c_char {
+    // SAFETY: contract of as_ref.
+    let entries = unsafe { as_ref(state) }
+        .and_then(|state| state.state.tab(TabId::new(id)))
+        .map(|tab| tab.history.entries().join(&HISTORY_SEPARATOR.to_string()))
+        .unwrap_or_default();
+    into_c_string(entries)
 }
 
-// The URL to load, or an empty string when there is nowhere to go. Owned
-// by the caller.
+// Which entry of weglet_tab_history is current. 0 for no such tab.
 #[doc = safety_doc!()]
 #[no_mangle]
-pub unsafe extern "C" fn weglet_tab_go_back(state: *mut WegletState, id: u64) -> *mut c_char {
-    // SAFETY: contract of as_mut.
-    let url = unsafe { as_mut(state) }
-        .and_then(|state| state.state.tab_mut(TabId::new(id)))
-        .and_then(|tab| tab.history.go_back())
-        .unwrap_or_default()
-        .to_string();
-    into_c_string(url)
-}
-
-#[doc = safety_doc!()]
-#[no_mangle]
-pub unsafe extern "C" fn weglet_tab_go_forward(state: *mut WegletState, id: u64) -> *mut c_char {
-    // SAFETY: contract of as_mut.
-    let url = unsafe { as_mut(state) }
-        .and_then(|state| state.state.tab_mut(TabId::new(id)))
-        .and_then(|tab| tab.history.go_forward())
-        .unwrap_or_default()
-        .to_string();
-    into_c_string(url)
+pub unsafe extern "C" fn weglet_tab_history_cursor(state: *const WegletState, id: u64) -> usize {
+    // SAFETY: contract of as_ref.
+    unsafe { as_ref(state) }
+        .and_then(|state| state.state.tab(TabId::new(id)))
+        .map_or(0, |tab| tab.history.cursor())
 }
 
 #[doc = safety_doc!()]

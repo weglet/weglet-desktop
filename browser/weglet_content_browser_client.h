@@ -41,11 +41,6 @@ class WegletContentBrowserClient : public content::ContentBrowserClient {
   void CreateThrottlesForNavigation(
       content::NavigationThrottleRegistry& registry) override;
 
-  // Serves the DevTools front-end's own resources -- see
-  // WegletDevToolsManagerDelegate.
-  std::unique_ptr<content::DevToolsManagerDelegate>
-  CreateDevToolsManagerDelegate() override;
-
   // Binds spellcheck::mojom::SpellCheckHost -- see WegletSpellCheckHost.
   void RegisterBrowserInterfaceBindersForFrame(
       content::RenderFrameHost* render_frame_host,

@@ -17,6 +17,9 @@ namespace weglet {
 // the bindings that make chrome.send() exist. The test is an exact host
 // match on content's own scheme and nothing else.
 //
+// Also serves the DevTools front-end at devtools://devtools/, with no
+// bindings -- see WegletDevToolsUI.
+//
 // Registered once at startup and never destroyed.
 class WegletWebUIControllerFactory : public content::WebUIControllerFactory {
  public:

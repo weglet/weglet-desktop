@@ -16,7 +16,6 @@
 #include "base/no_destructor.h"
 #include "base/path_service.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/task/thread_pool.h"
@@ -58,7 +57,7 @@
 #include "weglet/browser/weglet_bridge.h"
 #include "weglet/browser/weglet_context_menu.h"
 #include "weglet/browser/weglet_devtools_bindings.h"
-#include "weglet/browser/weglet_devtools_manager_delegate.h"
+#include "weglet/browser/weglet_devtools_ui.h"
 #include "weglet/browser/weglet_file_select_helper.h"
 #include "weglet/browser/weglet_find_bar.h"
 #include "weglet/browser/weglet_frame_view.h"
@@ -940,15 +939,7 @@ void WegletWindow::OpenDevTools(int inspect_x, int inspect_y) {
   if (!inspected) {
     return;
   }
-  const int port = WegletDevToolsManagerDelegate::GetHttpHandlerPort();
-  if (port == 0) {
-    LOG(WARNING) << "devtools http handler is not up yet";
-    return;
-  }
-  const GURL frontend_url(base::StringPrintf(
-      "http://127.0.0.1:%d/devtools/devtools_app.html?targetType=tab", port));
-
-  const uint64_t id = bridge_->OpenTab(window_id_, frontend_url.spec());
+  const uint64_t id = bridge_->OpenTab(window_id_, DevToolsFrontendUrl().spec());
   if (id == 0) {
     LOG(WARNING) << "tab limit reached, dropping devtools";
     return;

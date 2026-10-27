@@ -12,7 +12,6 @@
 #include "content/public/browser/render_frame_host.h"
 #include "mojo/public/cpp/bindings/binder_map.h"
 #include "weglet/browser/weglet_browser_main_parts.h"
-#include "weglet/browser/weglet_devtools_manager_delegate.h"
 #include "weglet/browser/weglet_navigation_throttle.h"
 #include "weglet/browser/weglet_spell_check_host.h"
 
@@ -45,11 +44,6 @@ blink::UserAgentMetadata WegletContentBrowserClient::GetUserAgentMetadata() {
 void WegletContentBrowserClient::CreateThrottlesForNavigation(
     content::NavigationThrottleRegistry& registry) {
   WegletNavigationThrottle::MaybeCreateAndAdd(registry);
-}
-
-std::unique_ptr<content::DevToolsManagerDelegate>
-WegletContentBrowserClient::CreateDevToolsManagerDelegate() {
-  return std::make_unique<WegletDevToolsManagerDelegate>();
 }
 
 void WegletContentBrowserClient::RegisterBrowserInterfaceBindersForFrame(

@@ -10,6 +10,7 @@
 #include "content/public/browser/web_ui_controller.h"
 #include "content/public/common/url_constants.h"
 #include "url/gurl.h"
+#include "weglet/browser/weglet_devtools_ui.h"
 #include "weglet/browser/weglet_message_handler.h"
 #include "weglet/browser/weglet_state_service.h"
 #include "weglet/browser/weglet_window.h"
@@ -91,6 +92,9 @@ std::unique_ptr<content::WebUIController>
 WegletWebUIControllerFactory::CreateWebUIControllerForURL(
     content::WebUI* web_ui,
     const GURL& url) {
+  if (IsDevToolsFrontend(url)) {
+    return std::make_unique<WegletDevToolsUI>(web_ui);
+  }
   if (!IsWegletPage(url)) {
     return nullptr;
   }
@@ -111,15 +115,24 @@ content::WebUI::TypeID WegletWebUIControllerFactory::GetWebUIType(
     const GURL& url) {
   // Any non-null value distinguishes a WebUI of this type from not a
   // WebUI; content compares these for identity. All Weglet pages share
-  // one type, one origin and one set of bindings.
+  // one type, one origin and one set of bindings. The DevTools front-end
+  // is a type of its own, with no bindings. Different values: the build
+  // merges identical constants into one address.
   static const int kWegletWebUIType = 0;
-  return IsWegletPage(url) ? &kWegletWebUIType : content::WebUI::kNoWebUI;
+  static const int kDevToolsWebUIType = 1;
+  if (IsWegletPage(url)) {
+    return &kWegletWebUIType;
+  }
+  if (IsDevToolsFrontend(url)) {
+    return &kDevToolsWebUIType;
+  }
+  return content::WebUI::kNoWebUI;
 }
 
 bool WegletWebUIControllerFactory::UseWebUIForURL(
     content::BrowserContext* browser_context,
     const GURL& url) {
-  return IsWegletPage(url);
+  return IsWegletPage(url) || IsDevToolsFrontend(url);
 }
 
 }  // namespace weglet

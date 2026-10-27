@@ -19,7 +19,6 @@
 #include "content/public/common/result_codes.h"
 #include "weglet/browser/weglet_bridge.h"
 #include "weglet/browser/weglet_browser_context.h"
-#include "weglet/browser/weglet_devtools_manager_delegate.h"
 #include "weglet/browser/weglet_profile_manager.h"
 #include "weglet/browser/weglet_web_ui_controller_factory.h"
 #include "weglet/browser/weglet_window.h"
@@ -86,9 +85,6 @@ int WegletBrowserMainParts::PreMainMessageLoopRun() {
   profile_manager_ = std::make_unique<WegletProfileManager>(spell_checker_.get());
   const std::string profile_name = ResolveProfileName();
   WegletProfileManager::Instance& initial = profile_manager_->GetOrCreate(profile_name);
-
-  // Serves the DevTools front-end tab loads -- see WegletWindow::OpenDevTools.
-  WegletDevToolsManagerDelegate::StartHttpHandler(initial.browser_context.get());
 
   // Registered before that navigation is asked whether it is a WebUI:
   // that answer decides whether the page gets a channel to the browser.
@@ -175,8 +171,6 @@ void WegletBrowserMainParts::OpenProfileWindow(const std::string& profile_name) 
 }
 
 void WegletBrowserMainParts::PostMainMessageLoopRun() {
-  WegletDevToolsManagerDelegate::StopHttpHandler();
-
   // Stopped first: neither should fire while the model is going away.
   settings_flush_timer_.Stop();
   session_save_timer_.Stop();

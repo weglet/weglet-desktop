@@ -156,7 +156,7 @@ discarded.
 
 - **Extensions.** No extension system exists.
 - **Sync.** No account system, no cross-device anything.
-- **Encryption at rest.** `settings.toml` and `session.toml` are plain
+- **Encryption at rest.** `settings.json` and `session.json` are plain
   files; disk encryption is the platform's job, not Weglet's.
 - **Per-resource ad blocking.** The built-in blocklist currently applies
   at navigation time, through the same throttle as the phishing

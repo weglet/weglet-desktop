@@ -155,12 +155,19 @@ the profile directory and it replaces the built-in table entirely:
 | File | Replaces |
 |---|---|
 | `blocklist.txt` | ad and tracker hosts |
-| `brands.toml` | the brands the heuristics know |
+| `brands.json` | the brands the heuristics know |
 | `sensitive_words.txt` | words that suggest a credential page |
-| `engines.toml` | the search engines settings offers |
+| `engines.json` | the search engines settings offers |
 
 **Replaces, not extends.** Someone who supplies a list has a reason, and
 silently keeping entries they removed would defeat it.
+
+**Per profile.** A file in one profile's directory changes that profile
+only; another profile open in the same process keeps its own lists.
+
+The two structured files are JSON and may carry `//` comments. A
+`brands.toml` or `engines.toml` written for an older Weglet is converted to
+JSON the first time the profile opens, as are the profile's own stores.
 
 A malformed file is reported and ignored, never fatal, and the structured
 ones are rejected whole rather than partly applied — half a brand table is
@@ -199,7 +206,7 @@ nothing in this codebase can construct one, because nothing needs to.
 ## What is deliberately not defended against
 
 - **A user who has lost their machine.** There is no encryption at rest
-  beyond what the platform provides. `settings.toml` and `session.toml`
+  beyond what the platform provides. `settings.json` and `session.json`
   are plain files.
 - **A malicious extension.** There is no extension system.
 - **Network-level observation.** Weglet is not a VPN and does not claim to

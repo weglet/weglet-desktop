@@ -164,6 +164,8 @@ pub mod abi {
     pub const set_search_engine: unsafe extern "C" fn(*mut WegletState, *const c_char) -> bool =
         weglet_ffi::weglet_set_search_engine;
 
+    pub const search_engine: unsafe extern "C" fn(*const WegletState) -> *mut c_char =
+        weglet_ffi::weglet_search_engine;
     pub const bookmark_count: unsafe extern "C" fn(*const WegletState) -> usize =
         weglet_ffi::weglet_bookmark_count;
     pub const bookmark_title_at: unsafe extern "C" fn(*const WegletState, usize) -> *mut c_char =

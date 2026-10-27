@@ -1960,6 +1960,12 @@ fn session_of(state: &AppState) -> Session {
 // weglet_state_new has no way to report them, and a malformed file leaves
 // the built-in list standing.
 fn load_overrides(paths: &Paths) -> (Engines, weglet_security::Lists) {
+    // A brands or engines table written by hand for an older Weglet is
+    // TOML; it is converted once, like the stores. One that will not
+    // convert is left in place and ignored, never fatal.
+    for file in [paths.brands_file(), paths.engines_file()] {
+        let _ = weglet_profile::migrate_legacy_toml(&file);
+    }
     let mut lists = weglet_security::Lists::built_in();
     if let Ok(text) = std::fs::read_to_string(paths.blocklist_file()) {
         lists.replace_blocklist(&text);

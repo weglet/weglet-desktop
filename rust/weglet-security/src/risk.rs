@@ -46,13 +46,13 @@ struct BrandFile {
     brand: Vec<BrandRule>,
 }
 
-// The brands, as data. See data/brands.toml for the format. include_str!
+// The brands, as data. See data/brands.json for the format. include_str!
 // rather than a file read at startup: Weglet ships one executable and
 // nothing beside it, and a profile can supply its own -- see Lists.
-pub(crate) const BUILT_IN_BRANDS: &str = include_str!("../data/brands.toml");
+pub(crate) const BUILT_IN_BRANDS: &str = include_str!("../data/brands.json");
 
 pub(crate) fn parse_brands(text: &str) -> Result<Vec<BrandRule>, String> {
-    toml::from_str::<BrandFile>(text)
+    serde_json_lenient::from_str::<BrandFile>(text)
         .map(|file| file.brand)
         .map_err(|error| error.to_string())
 }
@@ -756,7 +756,7 @@ mod tests {
     // browser that starts with no rules. These make it a build failure.
     #[test]
     fn the_built_in_brand_table_parses() {
-        let rules = parse_brands(BUILT_IN_BRANDS).expect("data/brands.toml");
+        let rules = parse_brands(BUILT_IN_BRANDS).expect("data/brands.json");
         assert!(!rules.is_empty());
         for rule in &rules {
             assert!(!rule.display_name.is_empty());
@@ -783,8 +783,8 @@ mod tests {
     fn a_malformed_brand_override_is_rejected_whole() {
         // Half a rule set catches some impostors and waves others
         // through.
-        assert!(parse_brands("[[brand]]\nname = ").is_err());
-        assert!(parse_brands("not toml at all = = =").is_err());
+        assert!(parse_brands(r#"{"brand": [{"name": }]}"#).is_err());
+        assert!(parse_brands("not json at all = = =").is_err());
     }
 
     fn risk(url: &str) -> Option<NavigationRisk> {

@@ -40,9 +40,9 @@ action("weglet_ffi_build") {
 
     # Compiled in with include_str!, so a change to one is a rebuild. The
     # depfile lists .rs and the manifests; these are data.
-    "weglet-profile/data/engines.toml",
+    "weglet-profile/data/engines.json",
     "weglet-security/data/blocklist.txt",
-    "weglet-security/data/brands.toml",
+    "weglet-security/data/brands.json",
     "weglet-security/data/sensitive_words.txt",
     "//weglet/rust/Cargo.toml",
     "//weglet/rust/Cargo.lock",

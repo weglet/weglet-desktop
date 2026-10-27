@@ -1,0 +1,224 @@
+// Brands an impostor imitates, and how to tell the real thing.
+//
+// labels   -- a label that IS the brand wherever it sits in front of a
+//             public suffix. google.com, google.co.nz, google.de and the
+//             ~190 other country domains are all Google's; hand-listing
+//             them was how blog.google and github.dev ended up blocked.
+// domains  -- registrable domains the brand owns whose own label is not
+//             one of the labels above.
+// tokens   -- what an impostor puts in a domain that is not the brand's.
+//
+// Data, not code. Adding a brand used to mean editing risk.rs and
+// recompiling. Compiled in with include_str! -- Weglet fetches nothing the
+// user did not ask for -- but a profile can override it: put your own
+// brands.json in the profile directory and it replaces this one.
+//
+// Every change here should come with a corpus case in tests/corpus.txt.
+// The false-positive and false-negative budgets are what keep a new rule
+// from quietly blocking real sites.
+{
+  "brand": [
+    {
+      "name": "Telegram",
+      "labels": [
+        "telegram"
+      ],
+      "domains": [
+        "t.me",
+        "telesco.pe"
+      ],
+      "tokens": [
+        "telegram"
+      ]
+    },
+    {
+      "name": "Google",
+      "labels": [
+        "google",
+        "gmail",
+        "youtube",
+        "googleapis",
+        "gstatic"
+      ],
+      "domains": [
+        "googleusercontent.com",
+        "googlesource.com",
+        "googleblog.com",
+        "youtu.be",
+        "youtube-nocookie.com",
+        "withgoogle.com",
+        "goo.gl",
+        "g.co"
+      ],
+      "tokens": [
+        "google",
+        "gmail",
+        "youtube"
+      ]
+    },
+    {
+      "name": "Microsoft",
+      "labels": [
+        "microsoft",
+        "outlook",
+        "office",
+        "office365",
+        "onedrive"
+      ],
+      "domains": [
+        "live.com",
+        "microsoftonline.com",
+        "sharepoint.com",
+        "msn.com",
+        "azure.com",
+        "windows.net",
+        "msedge.net",
+        "visualstudio.com"
+      ],
+      "tokens": [
+        "microsoft",
+        "outlook",
+        "office365",
+        "onedrive"
+      ]
+    },
+    {
+      "name": "Apple/iCloud",
+      "labels": [
+        "apple",
+        "icloud"
+      ],
+      "domains": [
+        "apple.news",
+        "cdn-apple.com",
+        "mzstatic.com"
+      ],
+      "tokens": [
+        "icloud",
+        "appleid",
+        "apple"
+      ]
+    },
+    {
+      "name": "Facebook",
+      "labels": [
+        "facebook",
+        "fbcdn"
+      ],
+      "domains": [
+        "fb.com",
+        "fb.me",
+        "fb.watch",
+        "meta.com"
+      ],
+      "tokens": [
+        "facebook"
+      ]
+    },
+    {
+      "name": "Instagram",
+      "labels": [
+        "instagram",
+        "cdninstagram"
+      ],
+      "domains": [
+        "instagr.am"
+      ],
+      "tokens": [
+        "instagram"
+      ]
+    },
+    {
+      "name": "WhatsApp",
+      "labels": [
+        "whatsapp"
+      ],
+      "domains": [
+        "wa.me"
+      ],
+      "tokens": [
+        "whatsapp"
+      ]
+    },
+    {
+      "name": "Discord",
+      "labels": [
+        "discord",
+        "discordapp"
+      ],
+      "domains": [
+        "discord.gg",
+        "dis.gd"
+      ],
+      "tokens": [
+        "discord"
+      ]
+    },
+    {
+      "name": "GitHub",
+      "labels": [
+        "github",
+        "githubusercontent",
+        "githubassets"
+      ],
+      "domains": [
+        "ghcr.io",
+        "github.blog"
+      ],
+      "tokens": [
+        "github"
+      ]
+    },
+    {
+      "name": "Steam",
+      "labels": [
+        "steampowered",
+        "steamcommunity",
+        "steamstatic"
+      ],
+      "domains": [
+        "valvesoftware.com"
+      ],
+      "tokens": [
+        "steampowered",
+        "steamcommunity"
+      ]
+    },
+    {
+      "name": "Roblox",
+      "labels": [
+        "roblox",
+        "rbxcdn"
+      ],
+      "domains": [],
+      "tokens": [
+        "roblox"
+      ]
+    },
+    {
+      "name": "Binance",
+      "labels": [
+        "binance"
+      ],
+      "domains": [
+        "bnbchain.org"
+      ],
+      "tokens": [
+        "binance"
+      ]
+    },
+    {
+      "name": "PayPal",
+      "labels": [
+        "paypal",
+        "paypalobjects"
+      ],
+      "domains": [
+        "paypal.me"
+      ],
+      "tokens": [
+        "paypal"
+      ]
+    }
+  ]
+}

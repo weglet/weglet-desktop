@@ -44,22 +44,7 @@ const MAX_ENTRIES: usize = 2000;
 
 impl BrowsingHistory {
     pub fn load(path: &Path) -> Result<Self, Error> {
-        let text = match std::fs::read_to_string(path) {
-            Ok(text) => text,
-            Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
-                return Ok(Self::default());
-            }
-            Err(source) => {
-                return Err(Error::Read {
-                    path: path.to_path_buf(),
-                    source,
-                });
-            }
-        };
-        toml::from_str(&text).map_err(|source| Error::Parse {
-            path: path.to_path_buf(),
-            source,
-        })
+        crate::store::load(path)
     }
 
     pub fn save(&mut self, path: &Path) -> Result<(), Error> {
@@ -67,11 +52,7 @@ impl BrowsingHistory {
             self.entries.sort_by_key(|entry| std::cmp::Reverse(entry.visited_at));
             self.entries.truncate(MAX_ENTRIES);
         }
-        let text = toml::to_string_pretty(self).map_err(|source| Error::Serialise {
-            path: path.to_path_buf(),
-            source,
-        })?;
-        crate::atomic::write(path, &text)
+        crate::store::save(path, self)
     }
 
     // Newest first: how the History page shows them, and where a rewrite
@@ -99,7 +80,7 @@ mod tests {
     fn file(name: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("weglet-history-{name}"));
         let _ = std::fs::remove_dir_all(&dir);
-        dir.join("history.toml")
+        dir.join("history.json")
     }
 
     #[test]

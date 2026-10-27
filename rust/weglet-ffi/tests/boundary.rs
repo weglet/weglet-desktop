@@ -398,7 +398,7 @@ fn windows_hold_their_own_tabs_and_their_own_active_one() {
 fn settings_are_marked_dirty_and_written_only_on_flush() {
     let f = guard("flush");
     let state = abi::state_new();
-    let settings_file = f.dir.join("Weglet").join("Default").join("settings.toml");
+    let settings_file = f.dir.join("Weglet").join("Default").join("settings.json");
 
     assert!(!unsafe { abi::settings_dirty(state) });
     assert!(unsafe { abi::set_accent_color(state, c("#3B82F6").as_ptr()) });
@@ -518,7 +518,7 @@ fn bookmarks_round_trip_through_a_flush_and_a_fresh_state() {
         .dir
         .join("Weglet")
         .join("Default")
-        .join("bookmarks.toml")
+        .join("bookmarks.json")
         .exists());
 
     let state = abi::state_new();
@@ -638,7 +638,7 @@ fn a_download_still_in_progress_when_the_browser_closes_is_orphaned_on_restart()
         .dir
         .join("Weglet")
         .join("Default")
-        .join("downloads.toml")
+        .join("downloads.json")
         .exists());
 
     let state = abi::state_new();
@@ -816,4 +816,34 @@ fn listed_profiles_are_every_directory_actually_on_disk_sorted() {
         .map(|i| take(abi::profile_name_at(i)))
         .collect();
     assert_eq!(names, vec!["Personal".to_string(), "Work".to_string()]);
+}
+
+// A profile an older Weglet wrote as TOML opens with its data, and is
+// converted to JSON on the way.
+#[test]
+fn a_profile_written_as_toml_opens_with_its_data() {
+    let f = guard("legacy-profile");
+    let profile = f.dir.join("Weglet").join("Default");
+    std::fs::create_dir_all(&profile).unwrap();
+    std::fs::write(profile.join("settings.toml"), "search-engine = \"bing\"
+").unwrap();
+    std::fs::write(
+        profile.join("bookmarks.toml"),
+        "[[entries]]
+title = \"A\"
+url = \"https://a.example/\"
+",
+    )
+    .unwrap();
+
+    let state = abi::state_new();
+    assert_eq!(take(unsafe { abi::search_engine(state) }), "bing");
+    assert_eq!(unsafe { abi::bookmark_count(state) }, 1);
+    assert_eq!(take(unsafe { abi::bookmark_url_at(state, 0) }), "https://a.example/");
+    unsafe { abi::state_free(state) };
+
+    for name in ["settings", "bookmarks"] {
+        assert!(profile.join(format!("{name}.json")).exists(), "{name}.json");
+        assert!(!profile.join(format!("{name}.toml")).exists(), "{name}.toml");
+    }
 }

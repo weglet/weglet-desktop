@@ -37,7 +37,7 @@ fn a_real_looking_feed_is_applied_and_then_matches() {
         .dir
         .join("Weglet")
         .join("Default")
-        .join("threat-feed.toml")
+        .join("threat-feed.json")
         .exists());
 }
 

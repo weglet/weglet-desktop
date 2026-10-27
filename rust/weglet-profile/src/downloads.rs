@@ -106,22 +106,7 @@ const MAX_RECORDS: usize = 200;
 
 impl Downloads {
     pub fn load(path: &Path) -> Result<Self, Error> {
-        let text = match std::fs::read_to_string(path) {
-            Ok(text) => text,
-            Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
-                return Ok(Self::default());
-            }
-            Err(source) => {
-                return Err(Error::Read {
-                    path: path.to_path_buf(),
-                    source,
-                });
-            }
-        };
-        toml::from_str(&text).map_err(|source| Error::Parse {
-            path: path.to_path_buf(),
-            source,
-        })
+        crate::store::load(path)
     }
 
     pub fn save(&mut self, path: &Path) -> Result<(), Error> {
@@ -131,11 +116,7 @@ impl Downloads {
             self.records.sort_by_key(|record| std::cmp::Reverse(record.started_at));
             self.records.truncate(MAX_RECORDS);
         }
-        let text = toml::to_string_pretty(self).map_err(|source| Error::Serialise {
-            path: path.to_path_buf(),
-            source,
-        })?;
-        crate::atomic::write(path, &text)
+        crate::store::save(path, self)
     }
 
     pub fn started(&mut self, guid: &str, url: &str, path: &Path) {
@@ -264,7 +245,7 @@ mod tests {
     fn file(name: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("weglet-downloads-{name}"));
         let _ = std::fs::remove_dir_all(&dir);
-        dir.join("downloads.toml")
+        dir.join("downloads.json")
     }
 
     #[test]

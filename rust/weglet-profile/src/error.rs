@@ -22,8 +22,16 @@ pub enum Error {
         source: std::io::Error,
     },
 
-    #[error("{path} is not valid TOML")]
+    #[error("{path} is not valid JSON")]
     Parse {
+        path: PathBuf,
+        #[source]
+        source: serde_json_lenient::Error,
+    },
+
+    // The TOML file an older Weglet wrote, which store.rs converts once.
+    #[error("{path} is not valid TOML")]
+    LegacyParse {
         path: PathBuf,
         #[source]
         source: toml::de::Error,
@@ -33,7 +41,7 @@ pub enum Error {
     Serialise {
         path: PathBuf,
         #[source]
-        source: toml::ser::Error,
+        source: serde_json_lenient::Error,
     },
 
     #[error("no profile directory on this platform")]

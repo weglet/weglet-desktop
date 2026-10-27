@@ -8,10 +8,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::Error;
 
-// The built-in engines, as data. See data/engines.toml for the format.
+// The built-in engines, as data. See data/engines.json for the format.
 // include_str! rather than a file read at startup: Weglet ships one
 // executable and nothing beside it.
-const BUILT_IN_ENGINES: &str = include_str!("../data/engines.toml");
+const BUILT_IN_ENGINES: &str = include_str!("../data/engines.json");
 
 // The id the user's own template is stored under. Not an engine in the
 // table, and rejected if one tries to be: the template lives in
@@ -33,7 +33,7 @@ struct EngineFile {
 }
 
 fn parse_engines(text: &str) -> Result<Vec<Engine>, String> {
-    let engines = toml::from_str::<EngineFile>(text)
+    let engines = serde_json_lenient::from_str::<EngineFile>(text)
         .map(|file| file.engine)
         .map_err(|error| error.to_string())?;
     if engines.is_empty() {
@@ -170,7 +170,7 @@ pub struct Settings {
     pub settings_flush_seconds: u64,
     pub session_save_seconds: u64,
 
-    // The engine's id from data/engines.toml, or "custom". A String, not
+    // The engine's id from data/engines.json, or "custom". A String, not
     // an enum: the set of engines is data.
     pub search_engine: String,
     // Kept even when the engine is not Custom: switching away and back
@@ -247,33 +247,13 @@ impl Settings {
     // caller can say so rather than silently substituting defaults and
     // overwriting real settings on the next save.
     pub fn load(path: &Path) -> Result<Self, Error> {
-        let text = match std::fs::read_to_string(path) {
-            Ok(text) => text,
-            Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
-                return Ok(Self::default());
-            }
-            Err(source) => {
-                return Err(Error::Read {
-                    path: path.to_path_buf(),
-                    source,
-                })
-            }
-        };
-
-        let mut settings: Self = toml::from_str(&text).map_err(|source| Error::Parse {
-            path: path.to_path_buf(),
-            source,
-        })?;
+        let mut settings: Self = crate::store::load(path)?;
         settings.clamp();
         Ok(settings)
     }
 
     pub fn save(&self, path: &Path) -> Result<(), Error> {
-        let text = toml::to_string_pretty(self).map_err(|source| Error::Serialise {
-            path: path.to_path_buf(),
-            source,
-        })?;
-        crate::atomic::write(path, &text)
+        crate::store::save(path, self)
     }
 
     // Applied on load, not on save, so an oversized file is rewritten
@@ -388,7 +368,7 @@ mod tests {
     #[test]
     fn an_engine_the_table_lacks_falls_back_to_its_default() {
         let engines = Engines::parse(
-            "[[engine]]\nid = \"only\"\nlabel = \"Only\"\ntemplate = \"https://only.example/?q=%s\"\n",
+            r#"{"engine": [{"id": "only", "label": "Only", "template": "https://only.example/?q=%s"}]}"#,
         )
         .unwrap();
         let mut settings = Settings {
@@ -402,7 +382,7 @@ mod tests {
     fn file(name: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("weglet-settings-{name}"));
         let _ = std::fs::remove_dir_all(&dir);
-        dir.join("settings.toml")
+        dir.join("settings.json")
     }
 
     #[test]
@@ -417,7 +397,7 @@ mod tests {
         let path = file("intervals");
         crate::atomic::write(
             &path,
-            "settings-flush-seconds = 0\nsession-save-seconds = 999999\n",
+            r#"{"settings-flush-seconds": 0, "session-save-seconds": 999999}"#,
         )
         .unwrap();
         let settings = Settings::load(&path).unwrap();
@@ -455,14 +435,14 @@ mod tests {
     #[test]
     fn an_unknown_key_is_ignored() {
         let path = file("unknown");
-        crate::atomic::write(&path, "search-engine = \"bing\"\nfuture-option = 42\n").unwrap();
+        crate::atomic::write(&path, r#"{"search-engine": "bing", "future-option": 42}"#).unwrap();
         assert_eq!(Settings::load(&path).unwrap().search_engine, "bing");
     }
 
     #[test]
     fn a_partial_file_keeps_the_defaults_for_what_is_missing() {
         let path = file("partial");
-        crate::atomic::write(&path, "custom-search-url = \"https://example.com\"\n").unwrap();
+        crate::atomic::write(&path, r#"{"custom-search-url": "https://example.com"}"#).unwrap();
         let settings = Settings::load(&path).unwrap();
         assert_eq!(settings.custom_search_url, "https://example.com");
         assert_eq!(settings.search_engine, Engines::built_in().default_id());
@@ -473,7 +453,7 @@ mod tests {
     #[test]
     fn a_malformed_file_is_an_error() {
         let path = file("malformed");
-        crate::atomic::write(&path, "this is not toml = = =").unwrap();
+        crate::atomic::write(&path, "this is not json = = =").unwrap();
         assert!(matches!(
             Settings::load(&path),
             Err(Error::Parse { .. })
@@ -548,7 +528,7 @@ mod tests {
     #[test]
     fn a_malformed_accent_colour_is_replaced_with_the_default_on_load() {
         let path = file("bad-accent");
-        crate::atomic::write(&path, "accent-color = \"purple\"\n").unwrap();
+        crate::atomic::write(&path, r#"{"accent-color": "purple"}"#).unwrap();
         assert_eq!(Settings::load(&path).unwrap().accent_color, DEFAULT_ACCENT);
     }
 
@@ -571,14 +551,14 @@ mod tests {
     #[test]
     fn a_malformed_language_code_is_replaced_with_english_on_load() {
         let path = file("bad-language");
-        crate::atomic::write(&path, "language = \"Not A Code!\"\n").unwrap();
+        crate::atomic::write(&path, r#"{"language": "Not A Code!"}"#).unwrap();
         assert_eq!(Settings::load(&path).unwrap().language, "en");
     }
 
     #[test]
     fn a_well_formed_language_code_survives_load() {
         let path = file("good-language");
-        crate::atomic::write(&path, "language = \"ru\"\n").unwrap();
+        crate::atomic::write(&path, r#"{"language": "ru"}"#).unwrap();
         assert_eq!(Settings::load(&path).unwrap().language, "ru");
     }
 

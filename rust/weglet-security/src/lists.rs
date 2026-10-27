@@ -64,7 +64,7 @@ mod tests {
     fn a_malformed_brand_file_leaves_the_rules_as_they_were() {
         let mut lists = Lists::built_in();
         let before = lists.brands.len();
-        assert!(lists.replace_brands("[[brand]]\nname = ").is_err());
+        assert!(lists.replace_brands(r#"{"brand": [{"name": }]}"#).is_err());
         assert_eq!(lists.brands.len(), before);
     }
 }

@@ -138,7 +138,7 @@ impl Paths {
     // in a list, alongside profiles this process is not running as.
     pub fn peek_accent_color(name: &str) -> String {
         Self::named_dir(name)
-            .and_then(|dir| crate::Settings::load(&dir.join("settings.toml")).ok())
+            .and_then(|dir| crate::Settings::load(&dir.join("settings.json")).ok())
             .map(|settings| settings.accent_color)
             .unwrap_or_else(|| crate::DEFAULT_ACCENT.to_string())
     }
@@ -189,7 +189,7 @@ impl Paths {
     }
 
     pub fn settings_file(&self) -> PathBuf {
-        self.root.join("settings.toml")
+        self.root.join("settings.json")
     }
 
     // Optional data files. Present means the user wants their own list;
@@ -200,7 +200,7 @@ impl Paths {
     }
 
     pub fn brands_file(&self) -> PathBuf {
-        self.root.join("brands.toml")
+        self.root.join("brands.json")
     }
 
     pub fn sensitive_words_file(&self) -> PathBuf {
@@ -208,27 +208,27 @@ impl Paths {
     }
 
     pub fn engines_file(&self) -> PathBuf {
-        self.root.join("engines.toml")
+        self.root.join("engines.json")
     }
 
     pub fn session_file(&self) -> PathBuf {
-        self.root.join("session.toml")
+        self.root.join("session.json")
     }
 
     pub fn bookmarks_file(&self) -> PathBuf {
-        self.root.join("bookmarks.toml")
+        self.root.join("bookmarks.json")
     }
 
     pub fn history_file(&self) -> PathBuf {
-        self.root.join("history.toml")
+        self.root.join("history.json")
     }
 
     pub fn downloads_file(&self) -> PathBuf {
-        self.root.join("downloads.toml")
+        self.root.join("downloads.json")
     }
 
     pub fn threat_feed_file(&self) -> PathBuf {
-        self.root.join("threat-feed.toml")
+        self.root.join("threat-feed.json")
     }
 }
 
@@ -260,8 +260,8 @@ mod tests {
     #[test]
     fn the_file_names_are_stable() {
         let paths = Paths::at("/tmp/profile");
-        assert!(paths.settings_file().ends_with("settings.toml"));
-        assert!(paths.session_file().ends_with("session.toml"));
+        assert!(paths.settings_file().ends_with("settings.json"));
+        assert!(paths.session_file().ends_with("session.json"));
     }
 
     #[test]

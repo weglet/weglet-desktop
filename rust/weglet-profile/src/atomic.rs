@@ -10,7 +10,7 @@ use crate::Error;
 // Writes a sibling temp file, flushes it to the platter, then renames over
 // the target. A reader sees either the whole old file or the whole new
 // one. std::fs::write leaves a truncated file behind if the process dies
-// mid-write, and truncated settings.toml reads back as "use defaults".
+// mid-write, and truncated settings.json reads back as "use defaults".
 pub fn write(path: &Path, contents: &str) -> Result<(), Error> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     std::fs::create_dir_all(parent).map_err(|source| Error::Write {
@@ -61,7 +61,7 @@ mod tests {
 
     #[test]
     fn a_write_lands_whole() {
-        let path = dir("whole").join("f.toml");
+        let path = dir("whole").join("f.json");
         write(&path, "a = 1\n").unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "a = 1\n");
     }
@@ -70,7 +70,7 @@ mod tests {
     // tail of the previous contents behind.
     #[test]
     fn a_shorter_write_replaces_the_longer_one_completely() {
-        let path = dir("replace").join("f.toml");
+        let path = dir("replace").join("f.json");
         write(&path, &"a".repeat(4096)).unwrap();
         write(&path, "b").unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "b");
@@ -78,7 +78,7 @@ mod tests {
 
     #[test]
     fn missing_directories_are_created() {
-        let path = dir("nested").join("a").join("b").join("f.toml");
+        let path = dir("nested").join("a").join("b").join("f.json");
         write(&path, "x").unwrap();
         assert!(path.exists());
     }
@@ -86,7 +86,7 @@ mod tests {
     #[test]
     fn no_temp_file_is_left_behind() {
         let dir = dir("cleanup");
-        write(&dir.join("f.toml"), "x").unwrap();
+        write(&dir.join("f.json"), "x").unwrap();
         let leftovers: Vec<String> = std::fs::read_dir(&dir)
             .unwrap()
             .filter_map(Result::ok)

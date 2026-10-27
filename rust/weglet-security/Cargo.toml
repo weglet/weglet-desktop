@@ -7,10 +7,11 @@ authors.workspace = true
 publish.workspace = true
 
 [dependencies]
-# For the brand table in data/brands.toml. The rules used to be a const
+# For the brand table in data/brands.json. The rules used to be a const
 # array in risk.rs, so adding a brand meant editing Rust and rebuilding.
 serde = { version = "1", features = ["derive"] }
-toml = "1"
+# The version Chromium carries in //third_party/rust.
+serde_json_lenient = "=0.2.4"
 idna = "1"
 # The Public Suffix List, compiled in. Without it "blog.google" and
 # "google.co.nz" cannot be told apart from an impostor, and both get

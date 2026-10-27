@@ -167,8 +167,9 @@ complete tree with exact versions and licenses.
 
 | Crate | Used for | License |
 |---|---|---|
-| [`serde`](https://serde.rs) | Parsing `contract.json`, `tokens.json`, and the per-profile override files (`brands.toml`, `engines.toml`) | MIT OR Apache-2.0 |
-| [`toml`](https://docs.rs/toml) | The `.toml` format those files are written in | MIT OR Apache-2.0 |
+| [`serde`](https://serde.rs) | Reading and writing the profile's files and the per-profile override files (`brands.json`, `engines.json`) | MIT OR Apache-2.0 |
+| [`serde_json_lenient`](https://docs.rs/serde_json_lenient) | The JSON those files are written in, with comments allowed in hand-edited ones | MIT OR Apache-2.0 |
+| [`toml`](https://docs.rs/toml) | Converting the TOML files an older Weglet wrote | MIT OR Apache-2.0 |
 | [`thiserror`](https://docs.rs/thiserror) | Error types in `weglet-profile` | MIT OR Apache-2.0 |
 | [`url`](https://docs.rs/url) | URL parsing shared by `weglet-url` and `weglet-security` | MIT OR Apache-2.0 |
 | [`idna`](https://docs.rs/idna) | Punycode and IDNA normalisation -- what lets the risk heuristics compare an internationalised domain to its Latin skeleton | MIT OR Apache-2.0 |

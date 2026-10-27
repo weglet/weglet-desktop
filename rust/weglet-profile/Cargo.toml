@@ -8,6 +8,10 @@ publish.workspace = true
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
+# The version Chromium carries in //third_party/rust, which the GN build
+# will link against.
+serde_json_lenient = "=0.2.4"
+# Only to convert the TOML files an older Weglet wrote -- see src/store.rs.
 toml = "1"
 thiserror = "2"
 url = "2"

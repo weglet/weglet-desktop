@@ -64,6 +64,27 @@ generated from `ui/contract.json`: `WegletMessageHandler::Validate`
 compares what arrived against the arity and argument types the contract
 declares.
 
+**DevTools has a channel of its own, and no port.** The front-end is
+served at `devtools://devtools/bundled/` from the resources compiled into
+the binary, with no WebUI bindings. Its connection to the inspected tab
+is `WegletDevToolsBindings`, in process, and the bindings attach only to
+a page on that origin: the DevTools tab has an address bar like any other,
+and a site typed into it gets nothing. Nothing listens on a TCP port. A
+remote debugging port would let any program on the machine read every
+tab's cookies and run script on any site.
+
+## Downloads
+
+A finished download carries the Mark-of-the-Web
+(`WegletDownloadManagerDelegate::GetQuarantineConnectionCallback`), so
+SmartScreen and Office's Protected View check the file when it is opened,
+the same as for a file another browser downloaded.
+
+A file Windows treats as able to run code -- a program, a script, a
+shortcut, as `AssocIsDangerous` decides -- is never saved without a Save
+As dialog, whatever the "ask where to save" setting says. Without that,
+any page can put a program in Downloads without a click.
+
 ## What the risk heuristics are, and are not
 
 `rust/weglet-security/src/risk.rs` looks at an address and decides whether

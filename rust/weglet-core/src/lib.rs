@@ -9,7 +9,11 @@ mod state;
 mod tab;
 
 pub use history::History;
-pub use omnibox::{parse as parse_omnibox, Action as OmniboxAction};
+pub use omnibox::{
+    parse as parse_omnibox, suggest as suggest_omnibox, Action as OmniboxAction,
+    Suggestion as OmniboxSuggestion, SuggestionKind as OmniboxSuggestionKind,
+    SuggestionSource as OmniboxSuggestionSource, MAX_SUGGESTIONS as MAX_OMNIBOX_SUGGESTIONS,
+};
 pub use state::{AppState, RestoredTab, RestoredWindow, Window};
 pub use tab::{Tab, TabId, WindowId};
 

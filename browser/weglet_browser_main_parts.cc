@@ -10,21 +10,18 @@
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/logging.h"
+#include "base/process/launch.h"
 #include "base/run_loop.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/task/thread_pool.h"
 #include "base/time/time.h"
 #include "components/spellcheck/browser/windows_spell_checker.h"
-#include "content/public/browser/browser_context.h"
 #include "content/public/common/result_codes.h"
 #include "weglet/browser/weglet_bridge.h"
 #include "weglet/browser/weglet_browser_context.h"
 #include "weglet/browser/weglet_devtools_manager_delegate.h"
-#include "weglet/browser/weglet_download_observer.h"
-#include "weglet/browser/weglet_security_guard.h"
-#include "weglet/browser/weglet_state_service.h"
+#include "weglet/browser/weglet_profile_manager.h"
 #include "weglet/browser/weglet_web_ui_controller_factory.h"
-#include "weglet/browser/weglet_web_ui_data_source.h"
 #include "weglet/browser/weglet_window.h"
 
 #if defined(USE_AURA)
@@ -49,6 +46,21 @@ class WegletViewsDelegate : public views::ViewsDelegate {
 };
 #endif
 
+constexpr char kProfileSwitch[] = "profile";
+
+// What --profile resolved to at launch, or "Default" if it was absent
+// or WegletBridge::IsValidProfileName rejects it -- a launch is not the
+// place to fail over a stray command-line value.
+std::string ResolveProfileName() {
+  const std::string requested =
+      base::CommandLine::ForCurrentProcess()->GetSwitchValueUTF8(kProfileSwitch);
+  if (!requested.empty() && WegletBridge::IsValidProfileName(requested)) {
+    return requested;
+  }
+  const std::string last = WegletBridge::LastProfile();
+  return last.empty() ? "Default" : last;
+}
+
 }  // namespace
 
 WegletBrowserMainParts::WegletBrowserMainParts() = default;
@@ -62,9 +74,6 @@ int WegletBrowserMainParts::PreMainMessageLoopRun() {
   screen_ = views::CreateDesktopScreen();
 #endif
 
-  browser_context_ = std::make_unique<WegletBrowserContext>(
-      /*off_the_record=*/false);
-
   // Native Windows spellchecker -- see WegletSpellCheckHost. Created
   // unconditionally like real Chrome's own InitializePlatformSpellchecker:
   // cheap until a language checker is actually requested below.
@@ -74,43 +83,34 @@ int WegletBrowserMainParts::PreMainMessageLoopRun() {
       base::BindOnce(&WegletBrowserMainParts::OnSpellcheckLanguagesRetrieved,
                      weak_factory_.GetWeakPtr()));
 
-  // Serves the DevTools front-end tab loads -- see WegletWindow::OpenDevTools.
-  WegletDevToolsManagerDelegate::StartHttpHandler(browser_context_.get());
+  profile_manager_ = std::make_unique<WegletProfileManager>(spell_checker_.get());
+  const std::string profile_name = ResolveProfileName();
+  WegletProfileManager::Instance& initial = profile_manager_->GetOrCreate(profile_name);
 
-  // chrome://weglet/ has to exist before the first window navigates to it.
-  AddWegletWebUIDataSource(browser_context_.get());
+  // Serves the DevTools front-end tab loads -- see WegletWindow::OpenDevTools.
+  WegletDevToolsManagerDelegate::StartHttpHandler(initial.browser_context.get());
 
   // Registered before that navigation is asked whether it is a WebUI:
   // that answer decides whether the page gets a channel to the browser.
   WegletWebUIControllerFactory::Register();
 
-  bridge_ = std::make_unique<WegletBridge>();
-
-  // Before the first window: a page's controller reaches for both as soon
-  // as it is created. The guard first -- the state service holds it.
-  WegletSecurityGuard::CreateForBrowserContext(browser_context_.get(),
-                                               bridge_.get());
-  WegletStateService::CreateForBrowserContext(
-      browser_context_.get(), bridge_.get(),
-      WegletSecurityGuard::FromBrowserContext(browser_context_.get()),
-      browser_context_->permission_delegate(), spell_checker_.get());
-
-  download_observer_ = std::make_unique<WegletDownloadObserver>(
-      browser_context_->GetDownloadManager(), bridge_.get(),
-      WegletStateService::FromBrowserContext(browser_context_.get()));
+  WegletWindow::SetProfileSwitchHandler(base::BindRepeating(
+      &WegletBrowserMainParts::SwitchToProfile, weak_factory_.GetWeakPtr()));
+  WegletWindow::SetOpenProfileWindowHandler(base::BindRepeating(
+      &WegletBrowserMainParts::OpenProfileWindow, weak_factory_.GetWeakPtr()));
 
   settings_flush_timer_.Start(
-      FROM_HERE, bridge_->SettingsFlushInterval(),
+      FROM_HERE, initial.bridge->SettingsFlushInterval(),
       base::BindRepeating(&WegletBrowserMainParts::FlushSettings,
                           base::Unretained(this)));
   session_save_timer_.Start(
-      FROM_HERE, bridge_->SessionSaveInterval(),
+      FROM_HERE, initial.bridge->SessionSaveInterval(),
       base::BindRepeating(&WegletBrowserMainParts::SaveSession,
                           base::Unretained(this)));
 
   // One WegletWindow per window the model restored.
-  for (uint64_t window : bridge_->Windows()) {
-    WegletWindow::CreateAndShow(browser_context_.get(), bridge_.get(), window);
+  for (uint64_t window : initial.bridge->Windows()) {
+    WegletWindow::CreateAndShow(initial.browser_context.get(), initial.bridge.get(), window);
   }
 
   // Anything other than RESULT_CODE_NORMAL_EXIT aborts startup.
@@ -136,17 +136,42 @@ void WegletBrowserMainParts::OnSpellcheckLanguagesRetrieved(
 }
 
 void WegletBrowserMainParts::FlushSettings() {
-  if (bridge_ && bridge_->SettingsDirty() && !bridge_->FlushSettings()) {
-    // Settings that quietly stop being written look exactly like settings
-    // that are being written.
-    LOG(ERROR) << "could not write settings -- changes are not being saved";
+  if (profile_manager_) {
+    profile_manager_->FlushDirtySettings();
   }
 }
 
 void WegletBrowserMainParts::SaveSession() {
-  if (bridge_ && !bridge_->SaveSession()) {
-    LOG(ERROR) << "could not save the session";
+  if (profile_manager_) {
+    profile_manager_->SaveAllSessions();
   }
+}
+
+void WegletBrowserMainParts::SwitchToProfile(const std::string& profile_name) {
+  if (!WegletBridge::IsValidProfileName(profile_name)) {
+    return;
+  }
+
+  WegletBridge::SetLastProfile(profile_name);
+
+  base::CommandLine relaunch_command_line(*base::CommandLine::ForCurrentProcess());
+  relaunch_command_line.RemoveSwitch(kProfileSwitch);
+  relaunch_command_line.AppendSwitchUTF8(kProfileSwitch, profile_name);
+  base::LaunchProcess(relaunch_command_line, base::LaunchOptions());
+
+  // Closing every window drops the count to zero, which runs the quit
+  // closure WillRunMainMessageLoop installed -- see
+  // WegletWindow::QuitIfLastWindow. PostMainMessageLoopRun flushes
+  // settings and the session on the way out, same as any other quit.
+  WegletWindow::CloseAllWindows();
+}
+
+void WegletBrowserMainParts::OpenProfileWindow(const std::string& profile_name) {
+  if (!profile_manager_ || !WegletBridge::IsValidProfileName(profile_name)) {
+    return;
+  }
+  WegletProfileManager::Instance& instance = profile_manager_->GetOrCreate(profile_name);
+  WegletWindow::OpenNewWindow(instance.browser_context.get(), instance.bridge.get());
 }
 
 void WegletBrowserMainParts::PostMainMessageLoopRun() {
@@ -156,19 +181,9 @@ void WegletBrowserMainParts::PostMainMessageLoopRun() {
   settings_flush_timer_.Stop();
   session_save_timer_.Stop();
 
-  // Not when the window closed: the tab list was still being torn down.
-  if (bridge_ && !bridge_->SaveSession()) {
-    LOG(ERROR) << "could not save the session -- open tabs will be lost";
-  }
-  // Last chance for anything changed since the last tick.
-  if (bridge_ && bridge_->SettingsDirty() && !bridge_->FlushSettings()) {
-    LOG(ERROR) << "could not write settings -- the last changes are lost";
-  }
-
-  // Before the bridge: the state service is owned by the context and
-  // holds a pointer to it.
-  browser_context_.reset();
-  bridge_.reset();
+  // Every profile's own save-then-flush, then torn down in the order
+  // each instance needs -- see WegletProfileManager's destructor.
+  profile_manager_.reset();
   spell_checker_.reset();
 
 #if defined(USE_AURA)

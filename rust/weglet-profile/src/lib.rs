@@ -20,7 +20,7 @@ pub use downloads::{
     folder_to_reveal, format_bytes, progress_label, DownloadRecord, DownloadStatus, Downloads,
 };
 pub use error::Error;
-pub use paths::Paths;
+pub use paths::{is_valid_profile_name, Paths, DEFAULT_PROFILE};
 pub use session::{Session, SessionTab, SessionWindow};
 pub use settings::{
     default_engine_id, engine_label, engines, is_known_engine, query_url,

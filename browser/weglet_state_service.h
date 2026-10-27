@@ -181,6 +181,22 @@ class WegletStateService : public base::SupportsUserData::Data {
   void SetPendingToasts(content::WebContents* contents, std::vector<PendingToast> toasts);
   void ClearPendingToasts(content::WebContents* contents);
 
+  // The address bar's dropdown: bookmarks and history matching what is
+  // typed, ranked by WegletBridge::QueryOmniboxSuggestions, plus which
+  // one (if any) is highlighted for Enter/arrow-key selection.
+  struct PendingOmniboxSuggestion {
+    std::string label;
+    std::string url;
+    bool is_bookmark = false;
+  };
+  struct PendingOmniboxSuggestions {
+    std::vector<PendingOmniboxSuggestion> items;
+    int highlighted_index = -1;
+  };
+  void SetPendingOmniboxSuggestions(content::WebContents* contents,
+                                    PendingOmniboxSuggestions suggestions);
+  void ClearPendingOmniboxSuggestions(content::WebContents* contents);
+
  private:
   struct Entry {
     // Owned by the WebContents. Removed in RemovePage before it goes.
@@ -211,6 +227,7 @@ class WegletStateService : public base::SupportsUserData::Data {
   std::map<content::WebContents*, PendingFindResult> pending_find_results_;
   std::map<content::WebContents*, PendingPermissionPrompt> pending_permission_prompts_;
   std::map<content::WebContents*, std::vector<PendingToast>> pending_toasts_;
+  std::map<content::WebContents*, PendingOmniboxSuggestions> pending_omnibox_suggestions_;
 
   const raw_ptr<WegletBridge> bridge_;
   const raw_ptr<WegletSecurityGuard> guard_;

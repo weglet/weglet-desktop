@@ -21,8 +21,25 @@ const DEFAULT_ACCENT = accentPresets[0];
 
 // The panels, in the order the switcher shows them. One list, so the
 // index arithmetic and the panels cannot end up in different orders.
-const PANELS = ["search", "general", "security", "appearance"] as const;
+const PANELS = ["search", "general", "security", "appearance", "profiles"] as const;
 type PanelName = (typeof PANELS)[number];
+
+// Set by a row's "Rename" button; read by the new-profile form's submit,
+// which sends renameProfile instead of switchProfile while this is set.
+let renameTarget: string | null = null;
+
+function setProfileFormMode(target: string | null): void {
+  renameTarget = target;
+  const input = byId<HTMLInputElement>("new-profile-input");
+  input.value = target ?? "";
+  input.focus();
+  byId("new-profile-mode-hint").textContent = target
+    ? t("settings.profiles.renamingHint", currentLanguage).replace("{name}", target)
+    : "";
+  byId<HTMLButtonElement>("new-profile-btn").textContent = target
+    ? t("settings.profiles.renameSubmit", currentLanguage)
+    : t("settings.profiles.create", currentLanguage);
+}
 
 
 const SHAPES = ["pill", "rounded", "square"] as const;
@@ -100,6 +117,85 @@ function renderEngines(
       });
       pill.setAttribute("aria-pressed", String(engine.id === current));
       return pill;
+    }),
+  );
+}
+
+let deleteProfileTarget: string | null = null;
+
+function openDeleteProfileConfirm(profile: string): void {
+  deleteProfileTarget = profile;
+  byId("delete-profile-body").textContent = t(
+    "settings.profiles.deleteConfirmBody",
+    currentLanguage,
+  ).replace("{name}", profile);
+  deleteProfileModal.open();
+}
+
+const deleteProfileModal = createModal({
+  backdropId: "delete-profile-backdrop",
+  focusId: "delete-profile-cancel",
+  cancelId: "delete-profile-cancel",
+  onConfirm: () => {
+    if (deleteProfileTarget) {
+      send("deleteProfile", deleteProfileTarget);
+    }
+    deleteProfileModal.close();
+  },
+});
+
+function deleteProfileButton(profile: string): HTMLElement {
+  return el("button", {
+    className: "blocked-host-remove",
+    text: t("settings.profiles.delete", currentLanguage),
+    onClick: () => openDeleteProfileConfirm(profile),
+  });
+}
+
+function renderProfiles(
+  profiles: readonly string[],
+  colors: readonly string[],
+  active: string,
+): void {
+  const list = byId("profile-list");
+  list.replaceChildren(
+    ...profiles.map((profile, index) => {
+      const swatch = el("div", { className: "profile-swatch" });
+      swatch.style.background = colors[index] ?? "#666";
+
+      const nameBtn = el("button", {
+        className: profile === active ? "profile-name-btn active" : "profile-name-btn",
+        text: profile,
+        onClick: () => {
+          if (profile !== active) {
+            send("switchProfile", profile);
+          }
+        },
+      });
+
+      const rename = el("button", {
+        className: "blocked-host-remove",
+        text: t("settings.profiles.rename", currentLanguage),
+        onClick: () => setProfileFormMode(profile),
+      });
+
+      const openWindow = el("button", {
+        className: "blocked-host-remove",
+        text: t("settings.profiles.openWindow", currentLanguage),
+        onClick: () => send("openProfileWindow", profile),
+      });
+
+      const shortcut = el("button", {
+        className: "blocked-host-remove",
+        text: t("settings.profiles.shortcut", currentLanguage),
+        onClick: () => send("createProfileShortcut", profile),
+      });
+
+      const children: HTMLElement[] = [swatch, nameBtn, openWindow, rename, shortcut];
+      if (profile !== active) {
+        children.push(deleteProfileButton(profile));
+      }
+      return el("div", { className: "profile-row", children });
     }),
   );
 }
@@ -248,6 +344,9 @@ function render(state: SettingsState): void {
   toggle("threat-feed-toggle", state.threatFeedEnabled, (next) =>
     send("setThreatFeedEnabled", next),
   );
+  toggle("ask-where-to-save-toggle", state.askWhereToSaveDownloads, (next) =>
+    send("setAskWhereToSaveDownloads", next),
+  );
   renderThreatFeedStatus(state);
   // Turning it off needs no confirmation; turning it on does -- see
   // faviconsWarningModal below.
@@ -271,6 +370,7 @@ function render(state: SettingsState): void {
   applyAccent(state.accentColor);
   renderShape(state.addressBarShape);
   renderLanguage(state.language);
+  renderProfiles(state.profiles, state.profileColors, state.activeProfile);
   applyI18n(state.language);
 }
 
@@ -312,6 +412,13 @@ function main(): void {
   });
 
   byId("favicons-warning-cancel").addEventListener("click", () => faviconsWarningModal.close());
+  byId("delete-profile-cancel").addEventListener("click", () => deleteProfileModal.close());
+  byId("delete-profile-confirm").addEventListener("click", () => {
+    if (deleteProfileTarget) {
+      send("deleteProfile", deleteProfileTarget);
+    }
+    deleteProfileModal.close();
+  });
   const faviconsConfirm = byId<HTMLButtonElement>("favicons-warning-confirm");
   faviconsConfirm.addEventListener("click", (event) => {
     spawnRipple(faviconsConfirm, event.clientX, event.clientY);
@@ -384,6 +491,33 @@ function main(): void {
   });
 
   confirmingButton("clear-data-btn", () => send("clearBrowsingData"));
+
+  const newProfileInput = byId<HTMLInputElement>("new-profile-input");
+  const submitProfileForm = (): void => {
+    const name = newProfileInput.value.trim();
+    if (!name) {
+      return;
+    }
+    if (renameTarget) {
+      if (name !== renameTarget) {
+        send("renameProfile", renameTarget, name);
+      }
+      setProfileFormMode(null);
+    } else {
+      send("switchProfile", name);
+    }
+    newProfileInput.value = "";
+  };
+  byId("new-profile-btn").addEventListener("click", submitProfileForm);
+  newProfileInput.addEventListener("keydown", (event: Event) => {
+    const key = (event as KeyboardEvent).key;
+    if (key === "Enter") {
+      submitProfileForm();
+    } else if (key === "Escape" && renameTarget) {
+      setProfileFormMode(null);
+      newProfileInput.value = "";
+    }
+  });
 
   onSettings(render);
 }

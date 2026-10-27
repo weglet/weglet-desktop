@@ -23,6 +23,9 @@ extern "C" {
 typedef struct WegletState WegletState;
 
 WegletState* weglet_state_new();
+// As weglet_state_new, but loads the named profile's own data instead of
+// "Default". An invalid or empty name falls back to "Default".
+WegletState* weglet_state_new_for_profile(const char* profile);
 void weglet_state_free(WegletState* state);
 
 // Every char* returned below is owned by the caller and released with
@@ -74,6 +77,16 @@ void weglet_tab_loading_changed(WegletState* state, uint64_t id, bool loading);
 
 // Omnibox: what the user typed, resolved to a URL to load.
 char* weglet_omnibox_resolve(const WegletState* state, const char* input);
+
+// The address bar's dropdown: bookmarks and history matching `input`,
+// ranked. weglet_query_omnibox_suggestions recomputes the list and
+// returns its length; the three accessors below read what it stored.
+// Call the query function first on every keystroke -- there is no other
+// invalidation.
+size_t weglet_query_omnibox_suggestions(WegletState* state, const char* input);
+char* weglet_omnibox_suggestion_label_at(const WegletState* state, size_t index);
+char* weglet_omnibox_suggestion_url_at(const WegletState* state, size_t index);
+bool weglet_omnibox_suggestion_is_bookmark_at(const WegletState* state, size_t index);
 
 // Security. 0 = nothing to say, 1 = warn, 2 = block.
 //
@@ -169,6 +182,10 @@ void weglet_set_threat_feed_enabled(WegletState* state, bool on);
 // site. See docs/security.md.
 bool weglet_favicons_enabled(const WegletState* state);
 void weglet_set_favicons_enabled(WegletState* state, bool on);
+// Off by default: most downloads land in Downloads with no prompt. On,
+// the browser shows a Save As dialog for every download.
+bool weglet_ask_where_to_save_downloads(const WegletState* state);
+void weglet_set_ask_where_to_save_downloads(WegletState* state, bool on);
 // False outright when the setting is off. `title` and `reason` may each
 // be null; a non-null one is always written, empty when the answer is
 // false.
@@ -182,6 +199,30 @@ bool weglet_is_known_phishing(const WegletState* state,
 bool weglet_apply_threat_feed(WegletState* state, const char* body);
 uint64_t weglet_threat_feed_updated_at(const WegletState* state);
 bool weglet_threat_feed_last_update_failed(const WegletState* state);
+
+// Profiles. weglet_current_profile is this instance's own name;
+// weglet_profile_count/_name_at list every profile this machine has ever
+// used, alphabetical -- re-read from disk on every call, only asked for
+// while the Settings page's Profiles tab is open.
+char* weglet_current_profile(const WegletState* state);
+size_t weglet_profile_count();
+char* weglet_profile_name_at(size_t index);
+// Whether `name` could become a profile directory -- checked before
+// offering to create or switch to it.
+bool weglet_is_valid_profile_name(const char* name);
+// Deletes a profile's whole directory. Never call this with the name of
+// the profile the calling process is itself running as.
+bool weglet_delete_profile(const char* name);
+// False and nothing touched if `old` doesn't exist, `new` already does,
+// or either name is invalid.
+bool weglet_rename_profile(const char* old_name, const char* new_name);
+// A profile's accent colour without loading the rest of its state.
+char* weglet_profile_accent_color(const char* name);
+// The profile a plain launch with no --profile switch should open.
+// Empty string when there is none yet.
+char* weglet_last_profile();
+// Records `name` as weglet_last_profile's answer from now on.
+void weglet_set_last_profile(const char* name);
 
 // Settings: search. An id the browser does not recognise leaves the
 // setting unchanged rather than resetting it.

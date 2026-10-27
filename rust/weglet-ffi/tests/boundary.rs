@@ -420,6 +420,43 @@ fn recorded_history_is_newest_first_and_clear_empties_it() {
 }
 
 #[test]
+fn omnibox_suggestions_rank_a_bookmark_above_a_history_entry() {
+    let _f = guard("omnibox-suggestions");
+    let state = abi::state_new();
+    unsafe {
+        abi::toggle_bookmark(state, c("Rust Lang").as_ptr(), c("https://rust-lang.org").as_ptr());
+        abi::record_history(state, c("rust book").as_ptr(), c("https://doc.rust-lang.org/book").as_ptr());
+    }
+    let count = unsafe { abi::query_omnibox_suggestions(state, c("rust").as_ptr()) };
+    assert_eq!(count, 2);
+    assert!(unsafe { abi::omnibox_suggestion_is_bookmark_at(state, 0) });
+    assert!(!unsafe { abi::omnibox_suggestion_is_bookmark_at(state, 1) });
+    assert_eq!(
+        take(unsafe { abi::omnibox_suggestion_label_at(state, 0) }),
+        "Rust Lang"
+    );
+    assert_eq!(
+        take(unsafe { abi::omnibox_suggestion_url_at(state, 0) }),
+        "https://rust-lang.org"
+    );
+    unsafe { abi::state_free(state) };
+}
+
+#[test]
+fn omnibox_suggestions_are_empty_for_a_blank_query_and_out_of_range_reads_are_defined() {
+    let _f = guard("omnibox-suggestions-empty");
+    let state = abi::state_new();
+    unsafe {
+        abi::toggle_bookmark(state, c("Rust Lang").as_ptr(), c("https://rust-lang.org").as_ptr());
+    }
+    assert_eq!(unsafe { abi::query_omnibox_suggestions(state, c("").as_ptr()) }, 0);
+    assert_eq!(take(unsafe { abi::omnibox_suggestion_label_at(state, 0) }), "");
+    assert_eq!(take(unsafe { abi::omnibox_suggestion_url_at(state, 0) }), "");
+    assert!(!unsafe { abi::omnibox_suggestion_is_bookmark_at(state, 0) });
+    unsafe { abi::state_free(state) };
+}
+
+#[test]
 fn a_download_moves_from_in_progress_to_completed() {
     let _f = guard("downloads");
     let state = abi::state_new();
@@ -505,4 +542,140 @@ fn favicons_enabled_defaults_to_off_and_the_setting_persists() {
     assert!(unsafe { abi::favicons_enabled(state) });
     assert!(unsafe { abi::settings_dirty(state) });
     unsafe { abi::state_free(state) };
+}
+
+#[test]
+fn ask_where_to_save_downloads_defaults_to_off_and_the_setting_persists() {
+    let _f = guard("ask-where-to-save-downloads-setting");
+    let state = abi::state_new();
+    assert!(!unsafe { abi::ask_where_to_save_downloads(state) });
+    unsafe { abi::set_ask_where_to_save_downloads(state, true) };
+    assert!(unsafe { abi::ask_where_to_save_downloads(state) });
+    assert!(unsafe { abi::settings_dirty(state) });
+    unsafe { abi::state_free(state) };
+}
+
+#[test]
+fn a_named_profile_has_its_own_settings_separate_from_default() {
+    let _f = guard("named-profile");
+    let work = unsafe { abi::state_new_for_profile(c("Work").as_ptr()) };
+    assert_eq!(take(unsafe { abi::current_profile(work) }), "Work");
+    unsafe {
+        abi::set_accent_color(work, c("#123456").as_ptr());
+        abi::flush_settings(work);
+        abi::state_free(work);
+    }
+
+    // Reopening "Work" sees what was saved.
+    let work_again = unsafe { abi::state_new_for_profile(c("Work").as_ptr()) };
+    assert_eq!(take(unsafe { abi::accent_color(work_again) }), "#123456");
+    unsafe { abi::state_free(work_again) };
+
+    // The default profile never saw it -- separate directories.
+    let default = abi::state_new();
+    assert_eq!(take(unsafe { abi::current_profile(default) }), "Default");
+    assert_ne!(take(unsafe { abi::accent_color(default) }), "#123456");
+    unsafe { abi::state_free(default) };
+}
+
+#[test]
+fn an_invalid_or_missing_profile_name_falls_back_to_default() {
+    let _f = guard("invalid-profile-name");
+    for name in ["../escape", "", "a/b"] {
+        let state = unsafe { abi::state_new_for_profile(c(name).as_ptr()) };
+        assert_eq!(take(unsafe { abi::current_profile(state) }), "Default", "{name}");
+        unsafe { abi::state_free(state) };
+    }
+    let state = unsafe { abi::state_new_for_profile(std::ptr::null()) };
+    assert_eq!(take(unsafe { abi::current_profile(state) }), "Default");
+    unsafe { abi::state_free(state) };
+}
+
+#[test]
+fn is_valid_profile_name_matches_the_crate_rule() {
+    assert!(unsafe { abi::is_valid_profile_name(c("Work").as_ptr()) });
+    assert!(!unsafe { abi::is_valid_profile_name(c("").as_ptr()) });
+    assert!(!unsafe { abi::is_valid_profile_name(c("a/b").as_ptr()) });
+    assert!(!unsafe { abi::is_valid_profile_name(std::ptr::null()) });
+}
+
+#[test]
+fn a_deleted_profile_no_longer_lists_and_deleting_a_missing_one_is_not_an_error() {
+    let f = guard("delete-profile");
+    std::fs::create_dir_all(f.dir.join("Weglet").join("Temp")).unwrap();
+    assert_eq!(abi::profile_count(), 1);
+    assert!(unsafe { abi::delete_profile(c("Temp").as_ptr()) });
+    assert_eq!(abi::profile_count(), 1); // falls back to just Default
+    assert_eq!(take(abi::profile_name_at(0)), "Default");
+    // Already gone -- still reports success.
+    assert!(unsafe { abi::delete_profile(c("Temp").as_ptr()) });
+    // An invalid name is refused outright.
+    assert!(!unsafe { abi::delete_profile(c("../escape").as_ptr()) });
+}
+
+#[test]
+fn a_renamed_profile_keeps_its_data_under_the_new_name() {
+    let f = guard("rename-profile");
+    let old = unsafe { abi::state_new_for_profile(c("Old").as_ptr()) };
+    unsafe {
+        abi::set_accent_color(old, c("#ABCDEF").as_ptr());
+        abi::flush_settings(old);
+        abi::state_free(old);
+    }
+    assert!(unsafe { abi::rename_profile(c("Old").as_ptr(), c("New").as_ptr()) });
+    assert!(!f.dir.join("Weglet").join("Old").exists());
+    let new = unsafe { abi::state_new_for_profile(c("New").as_ptr()) };
+    assert_eq!(take(unsafe { abi::accent_color(new) }), "#ABCDEF");
+    unsafe { abi::state_free(new) };
+}
+
+#[test]
+fn a_rename_never_overwrites_an_existing_profile() {
+    let f = guard("rename-collision");
+    std::fs::create_dir_all(f.dir.join("Weglet").join("A")).unwrap();
+    std::fs::create_dir_all(f.dir.join("Weglet").join("B")).unwrap();
+    assert!(!unsafe { abi::rename_profile(c("A").as_ptr(), c("B").as_ptr()) });
+    assert!(f.dir.join("Weglet").join("A").exists());
+}
+
+#[test]
+fn profile_accent_color_is_read_without_switching_to_it() {
+    let _f = guard("peek-accent");
+    let other = unsafe { abi::state_new_for_profile(c("Other").as_ptr()) };
+    unsafe {
+        abi::set_accent_color(other, c("#112233").as_ptr());
+        abi::flush_settings(other);
+        abi::state_free(other);
+    }
+    assert_eq!(
+        take(unsafe { abi::profile_accent_color(c("Other").as_ptr()) }),
+        "#112233"
+    );
+    // A profile that has never been opened still answers, with the default.
+    assert!(!take(unsafe { abi::profile_accent_color(c("NeverOpened").as_ptr()) }).is_empty());
+}
+
+#[test]
+fn last_profile_round_trips_and_defaults_to_empty() {
+    let _f = guard("last-profile");
+    assert_eq!(take(abi::last_profile()), "");
+    unsafe { abi::set_last_profile(c("Work").as_ptr()) };
+    assert_eq!(take(abi::last_profile()), "Work");
+    // An invalid name does not overwrite what was already recorded.
+    unsafe { abi::set_last_profile(c("../escape").as_ptr()) };
+    assert_eq!(take(abi::last_profile()), "Work");
+}
+
+#[test]
+fn listed_profiles_are_every_directory_actually_on_disk_sorted() {
+    let f = guard("list-profiles");
+    std::fs::create_dir_all(f.dir.join("Weglet").join("Work")).unwrap();
+    std::fs::create_dir_all(f.dir.join("Weglet").join("Personal")).unwrap();
+
+    let count = abi::profile_count();
+    assert_eq!(count, 2);
+    let names: Vec<String> = (0..count)
+        .map(|i| take(abi::profile_name_at(i)))
+        .collect();
+    assert_eq!(names, vec!["Personal".to_string(), "Work".to_string()]);
 }

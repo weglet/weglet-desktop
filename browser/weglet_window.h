@@ -25,6 +25,7 @@
 #include "ui/views/controls/webview/unhandled_keyboard_event_handler.h"
 #include "ui/views/widget/widget_delegate.h"
 #include "url/gurl.h"
+#include "weglet/browser/weglet_bridge.h"
 #include "weglet/browser/weglet_state_service.h"
 
 namespace content {
@@ -55,6 +56,7 @@ class WegletSiteInfoPopup;
 class WegletStateService;
 class WegletTabObserver;
 class WegletToastPopup;
+class WegletOmniboxSuggestionsPopup;
 
 // One browser window: a toolbar above, the active tab's page below. The
 // toolbar is a WebContents showing chrome://weglet/toolbar.html, not
@@ -87,6 +89,32 @@ class WegletWindow : public views::WidgetDelegate,
   static int window_count();
   static void SetQuitClosure(base::OnceClosure quit);
 
+  // Closes every open window -- see RequestProfileSwitch. Each Close()
+  // is asynchronous, so this returns before window_count() reaches 0.
+  static void CloseAllWindows();
+
+  // Set once by WegletBrowserMainParts, which owns the WegletBridge a
+  // clean switch has to check the new name against and flush before
+  // handing off.
+  static void SetProfileSwitchHandler(
+      base::RepeatingCallback<void(const std::string&)> handler);
+  // Forwards to the handler above, if one was set. A no-op otherwise --
+  // there is no profile-switch handler outside a real browser process.
+  void RequestProfileSwitch(const std::string& profile_name);
+
+  // Set once by WegletBrowserMainParts. Opens a new window into
+  // `profile_name` in this same process, building its context and
+  // bridge first if this is the first window into it this run.
+  static void SetOpenProfileWindowHandler(
+      base::RepeatingCallback<void(const std::string&)> handler);
+  void RequestOpenProfileWindow(const std::string& profile_name);
+
+  // Writes a desktop .lnk that launches this exe with
+  // --profile=<profile_name>, off the UI thread -- shortcut creation is
+  // blocking COM/file work, which the UI thread disallows post-startup.
+  // Reports the result as a toast once it's done.
+  void CreateProfileShortcut(const std::string& profile_name);
+
   WegletWindow(const WegletWindow&) = delete;
   WegletWindow& operator=(const WegletWindow&) = delete;
   ~WegletWindow() override;
@@ -94,6 +122,14 @@ class WegletWindow : public views::WidgetDelegate,
   // Called by a page's message handler, for the things that are a
   // window's business: which tab is in front and where it goes.
   void NavigateActiveTabFromOmnibox(const std::string& input);
+
+  // The address bar's dropdown. `anchor_left`/`anchor_bottom` are the
+  // address bar's own on-screen rect, like OpenSaveShortcutPopup's.
+  void QueryOmniboxSuggestions(const std::string& input, int anchor_left, int anchor_bottom);
+  void HideOmniboxSuggestions();
+  void MoveOmniboxHighlight(bool forward);
+  void AcceptOmniboxSuggestion(int index);
+
   void GoBack();
   void GoForward();
   void Reload();
@@ -298,6 +334,16 @@ class WegletWindow : public views::WidgetDelegate,
   // and the rest never reach the engine.
   static GURL ResolveForEngine(const std::string& address);
 
+  // Shared by NavigateActiveTabFromOmnibox's two paths (typed text and
+  // an accepted suggestion): loads an already-resolved URL in the active
+  // tab. `resolved` is never re-parsed as a search.
+  void NavigateActiveTabToResolvedUrl(const std::string& resolved);
+
+  // (Re)shows omnibox_suggestions_popup_ from omnibox_suggestions_,
+  // omnibox_highlighted_ and the remembered anchor. Creates the popup on
+  // first use.
+  void ShowOmniboxSuggestionsPopup();
+
   static int window_count_;
 
   const raw_ptr<content::BrowserContext> browser_context_;
@@ -322,10 +368,20 @@ class WegletWindow : public views::WidgetDelegate,
   std::unique_ptr<WegletPermissionPrompt> permission_prompt_;
   std::unique_ptr<WegletSiteInfoPopup> site_info_popup_;
   std::unique_ptr<WegletToastPopup> toast_popup_;
+  std::unique_ptr<WegletOmniboxSuggestionsPopup> omnibox_suggestions_popup_;
 
   // Oldest first, capped at kMaxToasts by ShowToast.
   std::vector<WegletStateService::PendingToast> toasts_;
   int next_toast_id_ = 1;
+
+  // The address bar's current dropdown, and which row (if any) is
+  // highlighted for Enter/arrow-key selection. Cleared by
+  // HideOmniboxSuggestions. `omnibox_anchor_*` is the address bar's own
+  // rect, remembered so MoveOmniboxHighlight can re-show at the same spot.
+  std::vector<WegletBridge::OmniboxSuggestion> omnibox_suggestions_;
+  int omnibox_highlighted_ = -1;
+  int omnibox_anchor_left_ = 0;
+  int omnibox_anchor_bottom_ = 0;
 
   views::UnhandledKeyboardEventHandler unhandled_keyboard_event_handler_;
 

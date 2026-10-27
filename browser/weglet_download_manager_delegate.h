@@ -13,6 +13,7 @@
 #include <cstdint>
 
 #include "base/files/file_path.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
 #include "components/download/public/common/download_path_reservation_tracker.h"
@@ -21,6 +22,8 @@
 
 namespace weglet {
 
+class WegletBridge;
+
 class WegletDownloadManagerDelegate : public content::DownloadManagerDelegate,
                                       public ui::SelectFileDialog::Listener {
  public:
@@ -28,6 +31,11 @@ class WegletDownloadManagerDelegate : public content::DownloadManagerDelegate,
   WegletDownloadManagerDelegate(const WegletDownloadManagerDelegate&) = delete;
   WegletDownloadManagerDelegate& operator=(const WegletDownloadManagerDelegate&) = delete;
   ~WegletDownloadManagerDelegate() override;
+
+  // Not available at construction time -- see
+  // WegletBrowserMainParts::PreMainMessageLoopRun. Null until set means
+  // "ask where to save" reads as off, its default.
+  void SetBridge(WegletBridge* bridge) { bridge_ = bridge; }
 
   // content::DownloadManagerDelegate:
   void GetNextId(content::DownloadIdCallback callback) override;
@@ -45,6 +53,11 @@ class WegletDownloadManagerDelegate : public content::DownloadManagerDelegate,
                   base::FilePath* download_save_dir) override;
 
  private:
+  // Which flow SelectFile() is currently open for -- ChooseSavePath's
+  // (Ctrl+S) or DetermineDownloadTarget's (ask-where-to-save). Only one
+  // dialog is ever open at a time, so one Listener can serve both.
+  enum class PendingDialog { kNone, kSavePackage, kDownloadTarget };
+
   // ui::SelectFileDialog::Listener:
   void FileSelected(const ui::SelectedFileInfo& file, int index) override;
   void FileSelectionCanceled() override;
@@ -55,8 +68,14 @@ class WegletDownloadManagerDelegate : public content::DownloadManagerDelegate,
 
   uint32_t next_download_id_ = 1;
 
+  // Not owned; outlives this (see SetBridge). Null before it is set and
+  // for the lifetime of tests that never call it.
+  raw_ptr<WegletBridge> bridge_ = nullptr;
+
+  PendingDialog pending_dialog_ = PendingDialog::kNone;
   bool can_save_as_complete_ = false;
-  content::SavePackagePathPickedCallback callback_;
+  content::SavePackagePathPickedCallback save_package_callback_;
+  download::DownloadTargetCallback download_target_callback_;
   scoped_refptr<ui::SelectFileDialog> select_file_dialog_;
 
   base::WeakPtrFactory<WegletDownloadManagerDelegate> weak_factory_{this};

@@ -57,6 +57,83 @@ pub fn parse(input: &str) -> Action {
     Action::Search(text.to_string())
 }
 
+// A bookmark or history entry, generic over what owns the string data:
+// weglet-ffi hands over borrowed strings out of the profile's own
+// structs, and this crate has no reason to know either shape.
+#[derive(Debug, Clone, Copy)]
+pub struct SuggestionSource<'a> {
+    pub label: &'a str,
+    pub url: &'a str,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SuggestionKind {
+    Bookmark,
+    History,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Suggestion {
+    pub kind: SuggestionKind,
+    pub label: String,
+    pub url: String,
+}
+
+// Shown below what has room in the popup -- see WegletOmniboxSuggestionsPopup.
+pub const MAX_SUGGESTIONS: usize = 6;
+
+// Ranks bookmarks and history entries whose label or url contains `input`
+// (case-insensitively). A prefix match beats a plain substring match, and
+// at equal rank a bookmark beats a history entry -- a site you kept beats
+// one you merely visited -- and an earlier (more recent, since both lists
+// arrive newest-first) entry beats a later one.
+pub fn suggest(
+    input: &str,
+    bookmarks: &[SuggestionSource],
+    history: &[SuggestionSource],
+) -> Vec<Suggestion> {
+    let needle = input.trim().to_lowercase();
+    if needle.is_empty() {
+        return Vec::new();
+    }
+
+    let mut scored: Vec<(u8, usize, Suggestion)> = Vec::new();
+    let mut collect = |base_rank: u8, kind: SuggestionKind, sources: &[SuggestionSource]| {
+        for (order, source) in sources.iter().enumerate() {
+            let lower_label = source.label.to_lowercase();
+            let lower_url = source.url.to_lowercase();
+            let is_prefix = lower_label.starts_with(&needle) || lower_url.starts_with(&needle);
+            let is_match = is_prefix || lower_label.contains(&needle) || lower_url.contains(&needle);
+            if !is_match {
+                continue;
+            }
+            let rank = base_rank + u8::from(!is_prefix);
+            scored.push((
+                rank,
+                order,
+                Suggestion {
+                    kind,
+                    label: source.label.to_string(),
+                    url: source.url.to_string(),
+                },
+            ));
+        }
+    };
+    collect(0, SuggestionKind::Bookmark, bookmarks);
+    collect(2, SuggestionKind::History, history);
+    scored.sort_by_key(|(rank, order, _)| (*rank, *order));
+
+    // A page that is both bookmarked and in history should appear once,
+    // as the bookmark: collect() already puts bookmarks first.
+    let mut seen_urls = std::collections::HashSet::new();
+    scored
+        .into_iter()
+        .filter(|(_, _, suggestion)| seen_urls.insert(suggestion.url.clone()))
+        .take(MAX_SUGGESTIONS)
+        .map(|(_, _, suggestion)| suggestion)
+        .collect()
+}
+
 fn has_explicit_scheme(text: &str) -> bool {
     let Some((scheme, rest)) = text.split_once(':') else {
         return false;
@@ -245,5 +322,62 @@ mod tests {
             parse("example.com\\@evil.example"),
             nav("https://example.com\\@evil.example")
         );
+    }
+
+    fn src<'a>(label: &'a str, url: &'a str) -> SuggestionSource<'a> {
+        SuggestionSource { label, url }
+    }
+
+    #[test]
+    fn empty_input_suggests_nothing() {
+        let bookmarks = [src("Example", "https://example.com")];
+        assert!(suggest("", &bookmarks, &[]).is_empty());
+        assert!(suggest("   ", &bookmarks, &[]).is_empty());
+    }
+
+    #[test]
+    fn a_match_can_come_from_the_label_or_the_url() {
+        let bookmarks = [src("Rust Language", "https://rust-lang.org")];
+        assert_eq!(suggest("rust", &bookmarks, &[]).len(), 1);
+        assert_eq!(suggest("lang.org", &bookmarks, &[]).len(), 1);
+        assert!(suggest("nothing-like-this", &bookmarks, &[]).is_empty());
+    }
+
+    #[test]
+    fn a_bookmark_outranks_a_history_entry_at_equal_match_quality() {
+        let bookmarks = [src("Example Site", "https://example.com/a")];
+        let history = [src("example query", "https://example.com/b")];
+        let results = suggest("example", &bookmarks, &history);
+        assert_eq!(results[0].kind, SuggestionKind::Bookmark);
+        assert_eq!(results[1].kind, SuggestionKind::History);
+    }
+
+    #[test]
+    fn a_prefix_match_outranks_a_substring_match() {
+        let history = [
+            src("has example in the middle", "https://a.example/x"),
+            src("example first", "https://b.example/y"),
+        ];
+        let results = suggest("example", &[], &history);
+        assert_eq!(results[0].label, "example first");
+    }
+
+    #[test]
+    fn the_same_url_is_not_suggested_twice() {
+        let bookmarks = [src("Example", "https://example.com")];
+        let history = [src("example", "https://example.com")];
+        assert_eq!(suggest("example", &bookmarks, &history).len(), 1);
+    }
+
+    #[test]
+    fn results_are_capped_at_the_maximum() {
+        let history: Vec<_> = (0..20)
+            .map(|i| (format!("example {i}"), format!("https://example{i}.test")))
+            .collect();
+        let sources: Vec<_> = history
+            .iter()
+            .map(|(label, url)| src(label, url))
+            .collect();
+        assert_eq!(suggest("example", &[], &sources).len(), MAX_SUGGESTIONS);
     }
 }

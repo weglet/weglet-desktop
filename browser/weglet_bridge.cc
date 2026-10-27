@@ -67,9 +67,60 @@ WegletBridge::WegletBridge() : state_(weglet_state_new()) {
   CHECK(state_) << "could not create the Weglet state";
 }
 
+WegletBridge::WegletBridge(const std::string& profile)
+    : state_(weglet_state_new_for_profile(profile.c_str())) {
+  CHECK(state_) << "could not create the Weglet state";
+}
+
 WegletBridge::~WegletBridge() {
   weglet_state_free(state_);
   state_ = nullptr;
+}
+
+// static
+bool WegletBridge::IsValidProfileName(const std::string& name) {
+  return weglet_is_valid_profile_name(name.c_str());
+}
+
+std::string WegletBridge::CurrentProfile() const {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  return TakeString(weglet_current_profile(state_));
+}
+
+// static
+bool WegletBridge::DeleteProfile(const std::string& name) {
+  return weglet_delete_profile(name.c_str());
+}
+
+// static
+bool WegletBridge::RenameProfile(const std::string& old_name, const std::string& new_name) {
+  return weglet_rename_profile(old_name.c_str(), new_name.c_str());
+}
+
+// static
+std::string WegletBridge::PeekAccentColor(const std::string& name) {
+  return TakeString(weglet_profile_accent_color(name.c_str()));
+}
+
+// static
+std::string WegletBridge::LastProfile() {
+  return TakeString(weglet_last_profile());
+}
+
+// static
+void WegletBridge::SetLastProfile(const std::string& name) {
+  weglet_set_last_profile(name.c_str());
+}
+
+std::vector<std::string> WegletBridge::ListProfiles() const {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  const size_t count = weglet_profile_count();
+  std::vector<std::string> profiles;
+  profiles.reserve(count);
+  for (size_t index = 0; index < count; ++index) {
+    profiles.push_back(TakeString(weglet_profile_name_at(index)));
+  }
+  return profiles;
 }
 
 // static
@@ -352,6 +403,16 @@ void WegletBridge::SetFaviconsEnabled(bool on) {
   weglet_set_favicons_enabled(state_, on);
 }
 
+bool WegletBridge::AskWhereToSaveDownloads() const {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  return weglet_ask_where_to_save_downloads(state_);
+}
+
+void WegletBridge::SetAskWhereToSaveDownloads(bool on) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  weglet_set_ask_where_to_save_downloads(state_, on);
+}
+
 bool WegletBridge::ApplyThreatFeed(const std::string& body) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   return weglet_apply_threat_feed(state_, body.c_str());
@@ -422,6 +483,22 @@ std::string WegletBridge::ResolveOmnibox(const std::string& input) const {
   return TakeString(weglet_omnibox_resolve(state_, input.c_str()));
 }
 
+std::vector<WegletBridge::OmniboxSuggestion> WegletBridge::QueryOmniboxSuggestions(
+    const std::string& input) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  const size_t count = weglet_query_omnibox_suggestions(state_, input.c_str());
+  std::vector<OmniboxSuggestion> suggestions;
+  suggestions.reserve(count);
+  for (size_t index = 0; index < count; ++index) {
+    suggestions.push_back({
+        TakeString(weglet_omnibox_suggestion_label_at(state_, index)),
+        TakeString(weglet_omnibox_suggestion_url_at(state_, index)),
+        weglet_omnibox_suggestion_is_bookmark_at(state_, index),
+    });
+  }
+  return suggestions;
+}
+
 namespace {
 
 // weglet_assess_navigation's return codes. Unrecognised = "nothing to
@@ -488,6 +565,7 @@ WegletBridge::SettingsSnapshot WegletBridge::Settings() const {
   snapshot.restore_session = weglet_restore_session(state_);
   snapshot.accent_color = TakeString(weglet_accent_color(state_));
   snapshot.address_bar_shape = TakeString(weglet_address_bar_shape(state_));
+  snapshot.ask_where_to_save_downloads = weglet_ask_where_to_save_downloads(state_);
 
   const size_t blocked_count = weglet_blocked_host_count(state_);
   snapshot.blocked_hosts.reserve(blocked_count);
@@ -500,6 +578,17 @@ WegletBridge::SettingsSnapshot WegletBridge::Settings() const {
   snapshot.threat_feed_updated_at = weglet_threat_feed_updated_at(state_);
   snapshot.threat_feed_last_update_failed =
       weglet_threat_feed_last_update_failed(state_);
+
+  snapshot.active_profile = TakeString(weglet_current_profile(state_));
+  const size_t profile_count = weglet_profile_count();
+  snapshot.profiles.reserve(profile_count);
+  snapshot.profile_colors.reserve(profile_count);
+  for (size_t index = 0; index < profile_count; ++index) {
+    std::string name = TakeString(weglet_profile_name_at(index));
+    snapshot.profile_colors.push_back(
+        name == snapshot.active_profile ? snapshot.accent_color : PeekAccentColor(name));
+    snapshot.profiles.push_back(std::move(name));
+  }
 
   return snapshot;
 }

@@ -23,8 +23,27 @@ pub mod abi {
     use weglet_ffi::WegletState;
 
     pub const state_new: extern "C" fn() -> *mut WegletState = weglet_ffi::weglet_state_new;
+    pub const state_new_for_profile: unsafe extern "C" fn(*const c_char) -> *mut WegletState =
+        weglet_ffi::weglet_state_new_for_profile;
     pub const state_free: unsafe extern "C" fn(*mut WegletState) = weglet_ffi::weglet_state_free;
     pub const string_free: unsafe extern "C" fn(*mut c_char) = weglet_ffi::weglet_string_free;
+
+    pub const current_profile: unsafe extern "C" fn(*const WegletState) -> *mut c_char =
+        weglet_ffi::weglet_current_profile;
+    pub const profile_count: extern "C" fn() -> usize = weglet_ffi::weglet_profile_count;
+    pub const profile_name_at: extern "C" fn(usize) -> *mut c_char =
+        weglet_ffi::weglet_profile_name_at;
+    pub const is_valid_profile_name: unsafe extern "C" fn(*const c_char) -> bool =
+        weglet_ffi::weglet_is_valid_profile_name;
+    pub const delete_profile: unsafe extern "C" fn(*const c_char) -> bool =
+        weglet_ffi::weglet_delete_profile;
+    pub const rename_profile: unsafe extern "C" fn(*const c_char, *const c_char) -> bool =
+        weglet_ffi::weglet_rename_profile;
+    pub const profile_accent_color: unsafe extern "C" fn(*const c_char) -> *mut c_char =
+        weglet_ffi::weglet_profile_accent_color;
+    pub const last_profile: extern "C" fn() -> *mut c_char = weglet_ffi::weglet_last_profile;
+    pub const set_last_profile: unsafe extern "C" fn(*const c_char) =
+        weglet_ffi::weglet_set_last_profile;
 
     pub const window_count: unsafe extern "C" fn(*const WegletState) -> usize =
         weglet_ffi::weglet_window_count;
@@ -60,6 +79,21 @@ pub mod abi {
         *const WegletState,
         *const c_char,
     ) -> *mut c_char = weglet_ffi::weglet_omnibox_resolve;
+
+    pub const query_omnibox_suggestions: unsafe extern "C" fn(
+        *mut WegletState,
+        *const c_char,
+    ) -> usize = weglet_ffi::weglet_query_omnibox_suggestions;
+    pub const omnibox_suggestion_label_at: unsafe extern "C" fn(
+        *const WegletState,
+        usize,
+    ) -> *mut c_char = weglet_ffi::weglet_omnibox_suggestion_label_at;
+    pub const omnibox_suggestion_url_at: unsafe extern "C" fn(
+        *const WegletState,
+        usize,
+    ) -> *mut c_char = weglet_ffi::weglet_omnibox_suggestion_url_at;
+    pub const omnibox_suggestion_is_bookmark_at: unsafe extern "C" fn(*const WegletState, usize) -> bool =
+        weglet_ffi::weglet_omnibox_suggestion_is_bookmark_at;
 
     pub const assess_navigation: unsafe extern "C" fn(
         *const c_char,
@@ -164,6 +198,10 @@ pub mod abi {
         weglet_ffi::weglet_favicons_enabled;
     pub const set_favicons_enabled: unsafe extern "C" fn(*mut WegletState, bool) =
         weglet_ffi::weglet_set_favicons_enabled;
+    pub const ask_where_to_save_downloads: unsafe extern "C" fn(*const WegletState) -> bool =
+        weglet_ffi::weglet_ask_where_to_save_downloads;
+    pub const set_ask_where_to_save_downloads: unsafe extern "C" fn(*mut WegletState, bool) =
+        weglet_ffi::weglet_set_ask_where_to_save_downloads;
     pub const is_known_phishing: unsafe extern "C" fn(
         *const WegletState,
         *const c_char,

@@ -184,6 +184,10 @@ pub struct Settings {
     // site, before the user has typed or clicked anything else. See
     // docs/security.md.
     pub favicons_enabled: bool,
+    // Off by default: most downloads should just land in Downloads. On,
+    // WegletDownloadManagerDelegate shows a native Save As dialog for
+    // every download instead of picking the path itself.
+    pub ask_where_to_save_downloads: bool,
     // A BCP-47-ish code ("en", "ru"). Not an enum: the known set is
     // data, in ui/i18n/*.txt, not a list this crate would have to keep
     // in step with.
@@ -230,6 +234,7 @@ impl Default for Settings {
             address_bar_shape: AddressBarShape::Pill,
             threat_feed_enabled: true,
             favicons_enabled: false,
+            ask_where_to_save_downloads: false,
             language: "en".to_string(),
         }
     }
@@ -415,6 +420,7 @@ mod tests {
             address_bar_shape: AddressBarShape::Rounded,
             threat_feed_enabled: false,
             favicons_enabled: true,
+            ask_where_to_save_downloads: true,
             language: "ru".into(),
         };
         settings.save(&path).unwrap();

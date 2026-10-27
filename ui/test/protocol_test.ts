@@ -199,6 +199,10 @@ test("settings arrive and an unknown shape is refused", () => {
     threatFeedEnabled: true,
     threatFeedUpdatedAt: 0,
     threatFeedLastUpdateFailed: false,
+    askWhereToSaveDownloads: false,
+    profiles: ["Default"],
+    profileColors: ["#A855F7"],
+    activeProfile: "Default",
   };
   push(pushes.settings, good);
   equal(got[0]?.addressBarShape, "pill", "shape");

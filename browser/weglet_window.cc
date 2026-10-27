@@ -9,14 +9,19 @@
 #include <utility>
 #include <vector>
 
+#include "base/base_paths.h"
+#include "base/command_line.h"
 #include "base/functional/bind.h"
 #include "base/logging.h"
 #include "base/no_destructor.h"
+#include "base/path_service.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/single_thread_task_runner.h"
+#include "base/task/thread_pool.h"
 #include "base/values.h"
+#include "base/win/shortcut.h"
 #include "build/build_config.h"
 #include "components/spellcheck/browser/windows_spell_checker.h"
 #include "components/spellcheck/common/spellcheck_common.h"
@@ -65,6 +70,7 @@
 #include "weglet/browser/weglet_shortcut_popup.h"
 #include "weglet/browser/weglet_state_service.h"
 #include "weglet/browser/weglet_tab_observer.h"
+#include "weglet/browser/weglet_omnibox_suggestions_popup.h"
 #include "weglet/browser/weglet_toast_popup.h"
 #include "weglet/common/weglet_host.h"
 #include "weglet/ui/generated_contract.h"
@@ -76,6 +82,23 @@ namespace {
 base::OnceClosure& QuitClosure() {
   static base::NoDestructor<base::OnceClosure> quit;
   return *quit;
+}
+
+base::RepeatingCallback<void(const std::string&)>& ProfileSwitchHandler() {
+  static base::NoDestructor<base::RepeatingCallback<void(const std::string&)>> handler;
+  return *handler;
+}
+
+base::RepeatingCallback<void(const std::string&)>& OpenProfileWindowHandler() {
+  static base::NoDestructor<base::RepeatingCallback<void(const std::string&)>> handler;
+  return *handler;
+}
+
+// Every live window, in creation order. Used only by CloseAllWindows --
+// see RequestProfileSwitch.
+std::vector<WegletWindow*>& AllWindowsRegistry() {
+  static base::NoDestructor<std::vector<WegletWindow*>> windows;
+  return *windows;
 }
 
 // Attaches a window to each of its WebContents so the WebUI factory can find
@@ -126,6 +149,89 @@ void WegletWindow::QuitIfLastWindow() {
 }
 
 // static
+void WegletWindow::CloseAllWindows() {
+  // Copied first: each CloseWindow() is asynchronous (views::Widget::Close
+  // posts the real teardown), so this never mutates the registry it is
+  // iterating.
+  const std::vector<WegletWindow*> windows = AllWindowsRegistry();
+  for (WegletWindow* window : windows) {
+    window->CloseWindow();
+  }
+}
+
+// static
+void WegletWindow::SetProfileSwitchHandler(
+    base::RepeatingCallback<void(const std::string&)> handler) {
+  ProfileSwitchHandler() = std::move(handler);
+}
+
+namespace {
+
+bool CreateProfileShortcutBlocking(const std::string& profile_name) {
+  if (!WegletBridge::IsValidProfileName(profile_name)) {
+    return false;
+  }
+  base::FilePath desktop;
+  if (!base::PathService::Get(base::DIR_USER_DESKTOP, &desktop)) {
+    return false;
+  }
+  const base::FilePath exe = base::CommandLine::ForCurrentProcess()->GetProgram();
+
+  base::CommandLine shortcut_args(exe);
+  shortcut_args.AppendSwitchUTF8("profile", profile_name);
+
+  base::win::ShortcutProperties properties;
+  properties.set_target(exe);
+  properties.set_working_dir(exe.DirName());
+  properties.set_arguments(shortcut_args.GetArgumentsString());
+  properties.set_description(base::UTF8ToWide("Weglet — " + profile_name));
+
+  const base::FilePath shortcut_path =
+      desktop.Append(base::FilePath::FromUTF8Unsafe("Weglet - " + profile_name + ".lnk"));
+  return base::win::CreateOrUpdateShortcutLink(
+      shortcut_path, properties, base::win::ShortcutOperation::kCreateAlways);
+}
+
+}  // namespace
+
+void WegletWindow::CreateProfileShortcut(const std::string& profile_name) {
+  base::ThreadPool::CreateCOMSTATaskRunner({base::MayBlock()})
+      ->PostTaskAndReplyWithResult(
+          FROM_HERE, base::BindOnce(&CreateProfileShortcutBlocking, profile_name),
+          base::BindOnce(
+              [](base::WeakPtr<WegletWindow> window, bool ok) {
+                if (window) {
+                  window->ShowToast(ok ? "toast.shortcutCreated" : "toast.shortcutFailed");
+                }
+              },
+              weak_factory_.GetWeakPtr()));
+}
+
+void WegletWindow::RequestProfileSwitch(const std::string& profile_name) {
+  for (const WegletBridge::DownloadEntry& download : bridge_->Downloads()) {
+    if (download.status == 0) {
+      ShowToast("toast.downloadsInProgress");
+      return;
+    }
+  }
+  if (ProfileSwitchHandler()) {
+    ProfileSwitchHandler().Run(profile_name);
+  }
+}
+
+// static
+void WegletWindow::SetOpenProfileWindowHandler(
+    base::RepeatingCallback<void(const std::string&)> handler) {
+  OpenProfileWindowHandler() = std::move(handler);
+}
+
+void WegletWindow::RequestOpenProfileWindow(const std::string& profile_name) {
+  if (OpenProfileWindowHandler()) {
+    OpenProfileWindowHandler().Run(profile_name);
+  }
+}
+
+// static
 WegletWindow* WegletWindow::FromWebContents(content::WebContents* contents) {
   if (!contents) {
     return nullptr;
@@ -166,10 +272,12 @@ WegletWindow::WegletWindow(content::BrowserContext* browser_context,
       security_guard_(
           WegletSecurityGuard::FromBrowserContext(browser_context)) {
   ++window_count_;
+  AllWindowsRegistry().push_back(this);
 }
 
 WegletWindow::~WegletWindow() {
   --window_count_;
+  std::erase(AllWindowsRegistry(), this);
 
   // Parented to widget_ -- torn down before it, not by relying on
   // declaration order alone.
@@ -180,6 +288,7 @@ WegletWindow::~WegletWindow() {
   permission_prompt_.reset();
   site_info_popup_.reset();
   toast_popup_.reset();
+  omnibox_suggestions_popup_.reset();
 
   // The WebViews hold bare pointers to their contents. Detach while the
   // views are alive, drop the widget, then drop the contents.
@@ -217,7 +326,11 @@ void WegletWindow::Init() {
   SetCanResize(true);
   SetCanMaximize(true);
   SetCanMinimize(true);
-  SetTitle(u"Weglet");
+  // "Weglet" alone for Default -- the common case -- so only a second or
+  // later profile's windows carry a visible label telling them apart.
+  const std::string profile = bridge_->CurrentProfile();
+  SetTitle(profile == "Default" ? u"Weglet"
+                                : base::UTF8ToUTF16("Weglet — " + profile));
 
   // Vertical stack: toolbar at its own height, page taking the rest. The
   // heights come from tokens.json through the generated header.
@@ -526,13 +639,26 @@ void WegletWindow::ShowActiveTab() {
 }
 
 void WegletWindow::NavigateActiveTabFromOmnibox(const std::string& input) {
+  // Enter with a row highlighted accepts that suggestion instead of
+  // re-resolving what is still sitting in the address bar's text.
+  if (omnibox_highlighted_ >= 0 &&
+      static_cast<size_t>(omnibox_highlighted_) < omnibox_suggestions_.size()) {
+    AcceptOmniboxSuggestion(omnibox_highlighted_);
+    return;
+  }
+  HideOmniboxSuggestions();
+
   // The model decides whether the text is an address or a search. A parser
   // here would be a second one next to the tested one.
   const std::string resolved = bridge_->ResolveOmnibox(input);
   if (resolved.empty()) {
     return;
   }
+  bridge_->RecordHistory(input, resolved);
+  NavigateActiveTabToResolvedUrl(resolved);
+}
 
+void WegletWindow::NavigateActiveTabToResolvedUrl(const std::string& resolved) {
   // Through ResolveForEngine like every other navigation path: the model
   // hands back "weglet://settings" verbatim, and the engine has never
   // heard of that scheme.
@@ -547,6 +673,64 @@ void WegletWindow::NavigateActiveTabFromOmnibox(const std::string& input) {
   content::NavigationController::LoadURLParams load(url);
   load.transition_type = ui::PAGE_TRANSITION_TYPED;
   contents->GetController().LoadURLWithParams(load);
+}
+
+void WegletWindow::QueryOmniboxSuggestions(const std::string& input,
+                                           int anchor_left,
+                                           int anchor_bottom) {
+  omnibox_anchor_left_ = anchor_left;
+  omnibox_anchor_bottom_ = anchor_bottom;
+  omnibox_suggestions_ = bridge_->QueryOmniboxSuggestions(input);
+  omnibox_highlighted_ = -1;
+  if (omnibox_suggestions_.empty()) {
+    HideOmniboxSuggestions();
+    return;
+  }
+  ShowOmniboxSuggestionsPopup();
+}
+
+void WegletWindow::HideOmniboxSuggestions() {
+  omnibox_suggestions_.clear();
+  omnibox_highlighted_ = -1;
+  if (omnibox_suggestions_popup_) {
+    omnibox_suggestions_popup_->Hide();
+  }
+}
+
+void WegletWindow::MoveOmniboxHighlight(bool forward) {
+  if (omnibox_suggestions_.empty()) {
+    return;
+  }
+  const int count = static_cast<int>(omnibox_suggestions_.size());
+  if (omnibox_highlighted_ < 0) {
+    omnibox_highlighted_ = forward ? 0 : count - 1;
+  } else {
+    omnibox_highlighted_ = (omnibox_highlighted_ + (forward ? 1 : -1) + count) % count;
+  }
+  ShowOmniboxSuggestionsPopup();
+}
+
+void WegletWindow::AcceptOmniboxSuggestion(int index) {
+  if (index < 0 || static_cast<size_t>(index) >= omnibox_suggestions_.size()) {
+    return;
+  }
+  const std::string url = omnibox_suggestions_[index].url;
+  HideOmniboxSuggestions();
+  NavigateActiveTabToResolvedUrl(url);
+}
+
+void WegletWindow::ShowOmniboxSuggestionsPopup() {
+  if (!omnibox_suggestions_popup_) {
+    omnibox_suggestions_popup_ =
+        std::make_unique<WegletOmniboxSuggestionsPopup>(this, state_service_);
+  }
+  std::vector<WegletStateService::PendingOmniboxSuggestion> items;
+  items.reserve(omnibox_suggestions_.size());
+  for (const WegletBridge::OmniboxSuggestion& suggestion : omnibox_suggestions_) {
+    items.push_back({suggestion.label, suggestion.url, suggestion.is_bookmark});
+  }
+  omnibox_suggestions_popup_->Show(std::move(items), omnibox_highlighted_,
+                                   omnibox_anchor_left_, omnibox_anchor_bottom_);
 }
 
 void WegletWindow::GoBack() {

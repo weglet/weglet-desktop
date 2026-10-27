@@ -47,6 +47,14 @@ pub struct WegletState {
     downloads: Downloads,
     threat_feed: ThreatFeedCache,
     paths: Option<Paths>,
+    // The name actually used to discover `paths` -- weglet_profile::DEFAULT_PROFILE
+    // when the caller passed nothing or an invalid name, never the raw
+    // input. See weglet_current_profile.
+    profile_name: String,
+    // Recomputed by weglet_query_omnibox_suggestions on every keystroke;
+    // never persisted. Not `dirty`-tracked like the stores above -- it is
+    // derived from them, not a store of its own.
+    omnibox_suggestions: Vec<weglet_core::OmniboxSuggestion>,
     // Set when the matching store changed and has not reached the disk
     // yet. An atomic write ends in fsync, and the moment something
     // changed -- a click, a navigation, a download progress callback --
@@ -59,11 +67,13 @@ pub struct WegletState {
     threat_feed_dirty: bool,
 }
 
-// SAFETY: the caller must be the browser process's UI thread, and only
-// that thread. Nothing here is synchronised.
-#[no_mangle]
-pub extern "C" fn weglet_state_new() -> *mut WegletState {
-    let paths = Paths::discover().ok();
+// Shared by weglet_state_new (always DEFAULT_PROFILE) and
+// weglet_state_new_for_profile (whatever the browser resolved from the
+// command line). `profile` is assumed already resolved -- see
+// weglet_state_new_for_profile's own fallback.
+fn build_state(profile: &str) -> WegletState {
+    let paths = Paths::discover(profile).ok();
+    let profile_name = profile.to_string();
 
     // A settings file that will not parse must not stop the browser from
     // opening. The C++ side logs it; here the fallback is defaults.
@@ -111,7 +121,7 @@ pub extern "C" fn weglet_state_new() -> *mut WegletState {
         .unwrap_or_default();
     weglet_security::set_live_hashes(threat_feed.hashes.iter().cloned().collect());
 
-    Box::into_raw(Box::new(WegletState {
+    WegletState {
         state,
         settings,
         bookmarks,
@@ -119,12 +129,133 @@ pub extern "C" fn weglet_state_new() -> *mut WegletState {
         downloads,
         threat_feed,
         paths,
+        profile_name,
+        omnibox_suggestions: Vec::new(),
         settings_dirty: false,
         bookmarks_dirty: false,
         history_dirty: false,
         downloads_dirty,
         threat_feed_dirty: false,
-    }))
+    }
+}
+
+// SAFETY: the caller must be the browser process's UI thread, and only
+// that thread. Nothing here is synchronised.
+#[no_mangle]
+pub extern "C" fn weglet_state_new() -> *mut WegletState {
+    Box::into_raw(Box::new(build_state(weglet_profile::DEFAULT_PROFILE)))
+}
+
+// As weglet_state_new, but for a named profile -- see
+// WegletBrowserContext's own --profile switch. An invalid or empty name
+// falls back to DEFAULT_PROFILE rather than failing the launch.
+#[doc = safety_doc!()]
+#[no_mangle]
+pub unsafe extern "C" fn weglet_state_new_for_profile(profile: *const c_char) -> *mut WegletState {
+    // SAFETY: contract of str_from_c.
+    let requested = unsafe { str_from_c(profile) }.unwrap_or_default();
+    let name = if weglet_profile::is_valid_profile_name(requested) {
+        requested.trim()
+    } else {
+        weglet_profile::DEFAULT_PROFILE
+    };
+    Box::into_raw(Box::new(build_state(name)))
+}
+
+// ---------------------------------------------------------------------
+// Profiles
+// ---------------------------------------------------------------------
+
+// The name this instance actually runs as -- see WegletState::profile_name.
+#[doc = safety_doc!()]
+#[no_mangle]
+pub unsafe extern "C" fn weglet_current_profile(state: *const WegletState) -> *mut c_char {
+    // SAFETY: contract of as_ref.
+    let text = unsafe { as_ref(state) }
+        .map(|state| state.profile_name.clone())
+        .unwrap_or_default();
+    into_c_string(text)
+}
+
+// Every profile this machine has ever used, alphabetical. Re-lists the
+// filesystem on every call: only asked for when the Settings page's
+// Profiles tab is open, not on any hot path.
+#[no_mangle]
+pub extern "C" fn weglet_profile_count() -> usize {
+    weglet_profile::Paths::list_profiles().len()
+}
+
+#[no_mangle]
+pub extern "C" fn weglet_profile_name_at(index: usize) -> *mut c_char {
+    into_c_string(
+        weglet_profile::Paths::list_profiles()
+            .get(index)
+            .cloned()
+            .unwrap_or_default(),
+    )
+}
+
+// Whether `name` could become a profile directory: non-empty, no path
+// separators, nothing a filesystem would reject. Checked before offering
+// to create or switch to it -- see WegletBridge::IsValidProfileName.
+#[doc = safety_doc!()]
+#[no_mangle]
+pub unsafe extern "C" fn weglet_is_valid_profile_name(name: *const c_char) -> bool {
+    // SAFETY: contract of str_from_c.
+    unsafe { str_from_c(name) }.is_some_and(weglet_profile::is_valid_profile_name)
+}
+
+// Deletes a profile's whole directory. Never call this with the name of
+// the profile the calling process is itself running as -- see
+// WegletBridge::DeleteProfile.
+#[doc = safety_doc!()]
+#[no_mangle]
+pub unsafe extern "C" fn weglet_delete_profile(name: *const c_char) -> bool {
+    // SAFETY: contract of str_from_c.
+    unsafe { str_from_c(name) }.is_some_and(weglet_profile::Paths::delete_profile)
+}
+
+// False and nothing touched if `old` doesn't exist, `new` already does,
+// or either name is invalid.
+#[doc = safety_doc!()]
+#[no_mangle]
+pub unsafe extern "C" fn weglet_rename_profile(old: *const c_char, new: *const c_char) -> bool {
+    // SAFETY: contract of str_from_c, both arguments.
+    let (Some(old), Some(new)) = (unsafe { str_from_c(old) }, unsafe { str_from_c(new) }) else {
+        return false;
+    };
+    weglet_profile::Paths::rename_profile(old, new)
+}
+
+// A profile's accent colour without loading the rest of its state -- for
+// a swatch per row in a list that includes profiles this process is not
+// running as.
+#[doc = safety_doc!()]
+#[no_mangle]
+pub unsafe extern "C" fn weglet_profile_accent_color(name: *const c_char) -> *mut c_char {
+    // SAFETY: contract of str_from_c.
+    let text = unsafe { str_from_c(name) }
+        .map(weglet_profile::Paths::peek_accent_color)
+        .unwrap_or_default();
+    into_c_string(text)
+}
+
+// The profile a plain launch with no --profile should open -- whatever
+// the last switch or launch left active. Empty when there is none yet.
+#[no_mangle]
+pub extern "C" fn weglet_last_profile() -> *mut c_char {
+    into_c_string(weglet_profile::Paths::last_profile().unwrap_or_default())
+}
+
+// Records `name` as weglet_last_profile's answer from now on. A no-op
+// for an invalid name.
+#[doc = safety_doc!()]
+#[no_mangle]
+pub unsafe extern "C" fn weglet_set_last_profile(name: *const c_char) {
+    // SAFETY: contract of str_from_c.
+    if let Some(name) = unsafe { str_from_c(name) } {
+        weglet_profile::Paths::set_last_profile(name);
+    }
 }
 
 // SAFETY: `state` must come from weglet_state_new and must not be used
@@ -512,6 +643,90 @@ pub unsafe extern "C" fn weglet_omnibox_resolve(
         }),
     };
     into_c_string(url)
+}
+
+// Recomputes the address bar's dropdown from bookmarks and history and
+// stores it on `state`, returning how many there are. The three
+// accessors below read that stored list -- call this first on every
+// keystroke; it is cheap (a profile has at most a few thousand entries)
+// and there is no other invalidation to get wrong.
+#[doc = safety_doc!()]
+#[no_mangle]
+pub unsafe extern "C" fn weglet_query_omnibox_suggestions(
+    state: *mut WegletState,
+    input: *const c_char,
+) -> usize {
+    // SAFETY: contract of as_mut.
+    let Some(state) = (unsafe { as_mut(state) }) else {
+        return 0;
+    };
+    // SAFETY: contract of str_from_c.
+    let Some(input) = (unsafe { str_from_c(input) }) else {
+        state.omnibox_suggestions.clear();
+        return 0;
+    };
+
+    let bookmark_sources: Vec<weglet_core::OmniboxSuggestionSource> = state
+        .bookmarks
+        .entries
+        .iter()
+        .map(|entry| weglet_core::OmniboxSuggestionSource {
+            label: &entry.title,
+            url: &entry.url,
+        })
+        .collect();
+    let history_sources: Vec<weglet_core::OmniboxSuggestionSource> = state
+        .history
+        .entries
+        .iter()
+        .map(|entry| weglet_core::OmniboxSuggestionSource {
+            label: &entry.query,
+            url: &entry.url,
+        })
+        .collect();
+    state.omnibox_suggestions =
+        weglet_core::suggest_omnibox(input, &bookmark_sources, &history_sources);
+    state.omnibox_suggestions.len()
+}
+
+#[doc = safety_doc!()]
+#[no_mangle]
+pub unsafe extern "C" fn weglet_omnibox_suggestion_label_at(
+    state: *const WegletState,
+    index: usize,
+) -> *mut c_char {
+    // SAFETY: contract of as_ref.
+    let text = unsafe { as_ref(state) }
+        .and_then(|state| state.omnibox_suggestions.get(index))
+        .map(|suggestion| suggestion.label.clone())
+        .unwrap_or_default();
+    into_c_string(text)
+}
+
+#[doc = safety_doc!()]
+#[no_mangle]
+pub unsafe extern "C" fn weglet_omnibox_suggestion_url_at(
+    state: *const WegletState,
+    index: usize,
+) -> *mut c_char {
+    // SAFETY: contract of as_ref.
+    let text = unsafe { as_ref(state) }
+        .and_then(|state| state.omnibox_suggestions.get(index))
+        .map(|suggestion| suggestion.url.clone())
+        .unwrap_or_default();
+    into_c_string(text)
+}
+
+#[doc = safety_doc!()]
+#[no_mangle]
+pub unsafe extern "C" fn weglet_omnibox_suggestion_is_bookmark_at(
+    state: *const WegletState,
+    index: usize,
+) -> bool {
+    // SAFETY: contract of as_ref.
+    unsafe { as_ref(state) }
+        .and_then(|state| state.omnibox_suggestions.get(index))
+        .is_some_and(|suggestion| suggestion.kind == weglet_core::OmniboxSuggestionKind::Bookmark)
 }
 
 // ---------------------------------------------------------------------
@@ -1187,6 +1402,28 @@ pub unsafe extern "C" fn weglet_set_favicons_enabled(state: *mut WegletState, on
         return;
     };
     state.settings.favicons_enabled = on;
+    state.persist_settings();
+}
+
+// ---------------------------------------------------------------------
+// Downloads
+// ---------------------------------------------------------------------
+
+#[doc = safety_doc!()]
+#[no_mangle]
+pub unsafe extern "C" fn weglet_ask_where_to_save_downloads(state: *const WegletState) -> bool {
+    // SAFETY: contract of as_ref.
+    unsafe { as_ref(state) }.is_some_and(|state| state.settings.ask_where_to_save_downloads)
+}
+
+#[doc = safety_doc!()]
+#[no_mangle]
+pub unsafe extern "C" fn weglet_set_ask_where_to_save_downloads(state: *mut WegletState, on: bool) {
+    // SAFETY: contract of as_mut.
+    let Some(state) = (unsafe { as_mut(state) }) else {
+        return;
+    };
+    state.settings.ask_where_to_save_downloads = on;
     state.persist_settings();
 }
 

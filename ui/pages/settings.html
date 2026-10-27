@@ -37,6 +37,9 @@
         <div class="switcher-tab" id="tab-appearance" data-panel="appearance" role="tab" tabindex="0" data-i18n="settings.tab.appearance">
           Appearance
         </div>
+        <div class="switcher-tab" id="tab-profiles" data-panel="profiles" role="tab" tabindex="0" data-i18n="settings.tab.profiles">
+          Profiles
+        </div>
       </div>
 
       <div class="panel" data-panel="search" role="tabpanel" aria-labelledby="tab-search">
@@ -92,6 +95,22 @@
             role="switch"
             tabindex="0"
             aria-labelledby="favicons-label"
+          ></div>
+        </div>
+
+        <div class="toggle-row section-gap">
+          <div class="toggle-text">
+            <div class="panel-heading" id="ask-where-to-save-label" data-i18n="settings.general.askWhereToSaveHeading">Ask where to save each file</div>
+            <div class="panel-hint" data-i18n="settings.general.askWhereToSaveHint">
+              Otherwise, downloads go straight to your Downloads folder.
+            </div>
+          </div>
+          <div
+            class="toggle"
+            id="ask-where-to-save-toggle"
+            role="switch"
+            tabindex="0"
+            aria-labelledby="ask-where-to-save-label"
           ></div>
         </div>
 
@@ -179,6 +198,32 @@
           <button class="shape-option" data-lang="ru">Русский</button>
         </div>
       </div>
+
+      <div class="panel" data-panel="profiles" role="tabpanel" aria-labelledby="tab-profiles" hidden>
+        <div class="panel-heading" data-i18n="settings.profiles.heading">Profiles</div>
+        <div class="panel-hint" data-i18n="settings.profiles.hint">
+          Each profile keeps its own bookmarks, history, settings and
+          cookies. Switching restarts Weglet.
+        </div>
+        <div class="profile-list" id="profile-list"></div>
+
+        <div class="panel-heading section-gap" data-i18n="settings.profiles.newHeading">New profile</div>
+        <div class="block-host-row">
+          <input
+            class="block-host-input"
+            id="new-profile-input"
+            type="text"
+            autocomplete="off"
+            spellcheck="false"
+            maxlength="64"
+            aria-label="New profile name"
+            data-i18n-placeholder="settings.profiles.newPlaceholder"
+            placeholder="Work"
+          />
+          <button class="refresh-btn" id="new-profile-btn" data-i18n="settings.profiles.create">Create &amp; switch</button>
+        </div>
+        <div class="panel-hint" id="new-profile-mode-hint"></div>
+      </div>
     </div>
 
     <div class="modal-backdrop" id="favicons-warning-backdrop">
@@ -195,6 +240,21 @@
           </button>
           <button type="button" class="modal-btn confirm" id="favicons-warning-confirm" data-i18n="settings.general.faviconsWarningEnable">
             Turn on
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-backdrop" id="delete-profile-backdrop">
+      <div class="modal" role="alertdialog" aria-modal="true" aria-labelledby="delete-profile-title">
+        <h2 id="delete-profile-title" data-i18n="settings.profiles.deleteConfirmTitle">Delete profile?</h2>
+        <div class="panel-hint" id="delete-profile-body"></div>
+        <div class="modal-actions">
+          <button type="button" class="modal-btn cancel" id="delete-profile-cancel" data-i18n="settings.profiles.deleteConfirmCancel">
+            Cancel
+          </button>
+          <button type="button" class="modal-btn confirm" id="delete-profile-confirm" data-i18n="settings.profiles.deleteConfirmDelete">
+            Delete
           </button>
         </div>
       </div>

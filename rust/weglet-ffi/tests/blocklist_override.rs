@@ -1,12 +1,7 @@
 // Copyright 2026 Weglet - Licensed under Apache 2.0
 //
-// A profile's own blocklist.txt replaces the built-in list for the rest
-// of the process -- see weglet-security/src/blocklist.rs's OVERRIDE. In
-// the real browser that is exactly right: one profile, loaded once, for
-// the life of the process. In a test binary it is not, so this test gets
-// a file of its own: each file directly under tests/ is a separate
-// process, so its permanent, one-time-only override cannot bleed into
-// boundary.rs's test that relies on the built-in list.
+// A profile's own blocklist.txt replaces the built-in list for that
+// profile only -- see weglet-security/src/lists.rs.
 
 mod common;
 use common::{abi, c, guard};
@@ -38,4 +33,24 @@ fn a_profile_can_supply_its_own_blocklist() {
     });
     assert!(!unsafe { abi::is_host_blocked(state, c("stats.doubleclick.net").as_ptr()) });
     unsafe { abi::state_free(state) };
+}
+
+// One process runs several profiles: a list one of them supplies must not
+// reach the others.
+#[test]
+fn another_profile_in_the_same_process_keeps_the_built_in_list() {
+    let f = guard("override-isolated");
+    let profile = f.dir.join("Weglet").join("Default");
+    std::fs::create_dir_all(&profile).unwrap();
+    std::fs::write(profile.join("blocklist.txt"), "not-doubleclick.example\n").unwrap();
+
+    let with_override = abi::state_new();
+    let other = unsafe { abi::state_new_for_profile(c("Work").as_ptr()) };
+    assert!(unsafe { abi::is_host_blocked(with_override, c("not-doubleclick.example").as_ptr()) });
+    assert!(!unsafe { abi::is_host_blocked(other, c("not-doubleclick.example").as_ptr()) });
+    assert!(unsafe { abi::is_host_blocked(other, c("stats.doubleclick.net").as_ptr()) });
+    unsafe {
+        abi::state_free(with_override);
+        abi::state_free(other);
+    }
 }

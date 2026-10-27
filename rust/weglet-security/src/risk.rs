@@ -4,7 +4,8 @@
 // wrong in both directions; the measured rates are in tests/corpus.rs.
 
 use std::collections::HashSet;
-use std::sync::OnceLock;
+
+use crate::Lists;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RiskLevel {
@@ -22,7 +23,7 @@ pub struct NavigationRisk {
 
 #[derive(Debug, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
-struct BrandRule {
+pub(crate) struct BrandRule {
     #[serde(rename = "name")]
     display_name: String,
     // A label that is the brand wherever it sits in front of a public
@@ -47,65 +48,26 @@ struct BrandFile {
 
 // The brands, as data. See data/brands.toml for the format. include_str!
 // rather than a file read at startup: Weglet ships one executable and
-// nothing beside it, and a profile can supply its own.
-const BUILT_IN_BRANDS: &str = include_str!("../data/brands.toml");
+// nothing beside it, and a profile can supply its own -- see Lists.
+pub(crate) const BUILT_IN_BRANDS: &str = include_str!("../data/brands.toml");
 
-static BRAND_OVERRIDE: OnceLock<Vec<BrandRule>> = OnceLock::new();
-
-// Installs rules read from the profile, replacing the built-in set.
-// Malformed input is rejected whole: half a rule set blocks some
-// impostors and waves others through.
-pub fn set_brand_rules_override(text: &str) -> Result<(), String> {
-    let parsed = parse_brands(text)?;
-    let _ = BRAND_OVERRIDE.set(parsed);
-    Ok(())
-}
-
-fn parse_brands(text: &str) -> Result<Vec<BrandRule>, String> {
+pub(crate) fn parse_brands(text: &str) -> Result<Vec<BrandRule>, String> {
     toml::from_str::<BrandFile>(text)
         .map(|file| file.brand)
         .map_err(|error| error.to_string())
 }
 
-fn brand_rules() -> &'static [BrandRule] {
-    if let Some(overridden) = BRAND_OVERRIDE.get() {
-        return overridden;
-    }
-    static RULES: OnceLock<Vec<BrandRule>> = OnceLock::new();
-    RULES.get_or_init(|| {
-        // The built-in file is checked by a test in this crate, so a
-        // malformed one fails the build rather than the browser.
-        parse_brands(BUILT_IN_BRANDS).unwrap_or_default()
-    })
-}
-
-
 // The words, as data. One per line; see data/sensitive_words.txt.
 // Matched as whole words: "auth" inside "authority" is not a signal.
-const BUILT_IN_SENSITIVE_WORDS: &str = include_str!("../data/sensitive_words.txt");
+pub(crate) const BUILT_IN_SENSITIVE_WORDS: &str = include_str!("../data/sensitive_words.txt");
 
-static WORD_OVERRIDE: OnceLock<Vec<String>> = OnceLock::new();
-
-pub fn set_sensitive_words_override(text: &str) {
-    let _ = WORD_OVERRIDE.set(parse_word_list(text));
-}
-
-fn parse_word_list(text: &str) -> Vec<String> {
+pub(crate) fn parse_word_list(text: &str) -> Vec<String> {
     text.lines()
         .map(|line| line.split('#').next().unwrap_or("").trim())
         .filter(|line| !line.is_empty())
         .map(str::to_lowercase)
         .collect()
 }
-
-fn sensitive_words() -> &'static [String] {
-    if let Some(overridden) = WORD_OVERRIDE.get() {
-        return overridden;
-    }
-    static WORDS: OnceLock<Vec<String>> = OnceLock::new();
-    WORDS.get_or_init(|| parse_word_list(BUILT_IN_SENSITIVE_WORDS))
-}
-
 
 // What the rest of the name says when a brand is embedded in it. On their
 // own these mean nothing -- applebees is somebody's business -- but next
@@ -184,7 +146,7 @@ const HIGH_RISK_TLDS: &[&str] = &[
 // every developer hitting their own server trains people to click through.
 const LOCAL_SUFFIXES: &[&str] = &["localhost", "local", "test", "internal", "home.arpa", "lan"];
 
-pub fn assess_navigation(raw_url: &str) -> Option<NavigationRisk> {
+pub fn assess_navigation(lists: &Lists, raw_url: &str) -> Option<NavigationRisk> {
     if raw_url.len() > 4096 {
         return Some(block(
             "Address too long",
@@ -267,13 +229,19 @@ pub fn assess_navigation(raw_url: &str) -> Option<NavigationRisk> {
 
     let (unicode_host, _) = idna::domain_to_unicode(&host);
     let uses_punycode = host.split('.').any(|label| label.starts_with("xn--"));
-    let sensitive = has_sensitive_word(&unicode_host, parsed.path(), parsed.query().unwrap_or(""));
+    let sensitive = has_sensitive_word(
+        lists,
+        &unicode_host,
+        parsed.path(),
+        parsed.query().unwrap_or(""),
+    );
 
     let labels: Vec<&str> = unicode_host.split('.').collect();
     let disguised = labels.iter().any(|label| is_disguised_latin(label));
     let mixed_scripts = labels.iter().any(|label| mixes_scripts(label));
 
     if let Some(risk) = find_brand_impersonation(
+        lists,
         &host,
         &unicode_host,
         sensitive,
@@ -403,6 +371,7 @@ enum Confidence {
 }
 
 fn find_brand_impersonation(
+    lists: &Lists,
     host: &str,
     unicode_host: &str,
     sensitive: bool,
@@ -429,7 +398,7 @@ fn find_brand_impersonation(
     let own_ascii = ascii_labels.get(own_index).copied().unwrap_or_default();
 
     // It is the brand. Stop before any impersonation rule runs.
-    for rule in brand_rules() {
+    for rule in &lists.brands {
         if rule.official_labels.iter().any(|label| label == own_ascii)
             || rule
                 .official_domains
@@ -440,7 +409,7 @@ fn find_brand_impersonation(
         }
     }
 
-    for rule in brand_rules() {
+    for rule in &lists.brands {
         let mut matched = None;
         for token in rule.tokens.iter().map(String::as_str) {
             // Typosquat or homoglyph of the name itself: gooogle,
@@ -587,7 +556,7 @@ fn is_local(host: &str) -> bool {
 }
 
 // Words, not substrings: "authority" yields "authority" and never "auth".
-fn has_sensitive_word(host: &str, path: &str, query: &str) -> bool {
+fn has_sensitive_word(lists: &Lists, host: &str, path: &str, query: &str) -> bool {
     let mut words: HashSet<String> = HashSet::new();
     for part in [host, path, query] {
         for word in part
@@ -598,7 +567,8 @@ fn has_sensitive_word(host: &str, path: &str, query: &str) -> bool {
             words.insert(word.to_string());
         }
     }
-    sensitive_words()
+    lists
+        .sensitive_words
         .iter()
         .any(|sensitive| {
             words.contains(sensitive.as_str()) || words.contains(&format!("{sensitive}s"))
@@ -818,7 +788,7 @@ mod tests {
     }
 
     fn risk(url: &str) -> Option<NavigationRisk> {
-        assess_navigation(url)
+        assess_navigation(&Lists::built_in(), url)
     }
 
     #[test]

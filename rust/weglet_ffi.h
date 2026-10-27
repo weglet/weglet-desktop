@@ -118,9 +118,10 @@ bool weglet_omnibox_suggestion_is_bookmark_at(const WegletState* state, size_t i
 // `host` is the host the risk is about, empty when there is none to show.
 // The target URL is not returned -- the caller already has it.
 //
-// A pure function of the URL. Whether the user blocked the site is
-// weglet_is_url_blocked.
-uint32_t weglet_assess_navigation(const char* url,
+// Judged against this profile's lists. Whether the user blocked the site
+// is weglet_is_url_blocked.
+uint32_t weglet_assess_navigation(const WegletState* state,
+                                  const char* url,
                                   char** title,
                                   char** reason,
                                   char** host);
@@ -267,9 +268,9 @@ bool weglet_set_search_engine(WegletState* state, const char* id);
 // The choices to list, excluding "custom" -- that is what the id field and
 // the template box together mean. Read weglet_engine_count, then _id_at /
 // _label_at for 0..count.
-size_t weglet_engine_count();
-char* weglet_engine_id_at(size_t index);
-char* weglet_engine_label_at(size_t index);
+size_t weglet_engine_count(const WegletState* state);
+char* weglet_engine_id_at(const WegletState* state, size_t index);
+char* weglet_engine_label_at(const WegletState* state, size_t index);
 char* weglet_custom_search_url(const WegletState* state);
 // Accepted mid-edit; validated when it is used, in weglet_omnibox_resolve.
 void weglet_set_custom_search_url(WegletState* state, const char* url);

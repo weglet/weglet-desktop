@@ -120,6 +120,7 @@ pub mod abi {
         weglet_ffi::weglet_omnibox_suggestion_is_bookmark_at;
 
     pub const assess_navigation: unsafe extern "C" fn(
+        *const WegletState,
         *const c_char,
         *mut *mut c_char,
         *mut *mut c_char,
@@ -156,8 +157,9 @@ pub mod abi {
     pub const flush_settings: unsafe extern "C" fn(*mut WegletState) -> bool =
         weglet_ffi::weglet_flush_settings;
 
-    pub const engine_count: extern "C" fn() -> usize = weglet_ffi::weglet_engine_count;
-    pub const engine_id_at: unsafe extern "C" fn(usize) -> *mut c_char =
+    pub const engine_count: unsafe extern "C" fn(*const WegletState) -> usize =
+        weglet_ffi::weglet_engine_count;
+    pub const engine_id_at: unsafe extern "C" fn(*const WegletState, usize) -> *mut c_char =
         weglet_ffi::weglet_engine_id_at;
     pub const set_search_engine: unsafe extern "C" fn(*mut WegletState, *const c_char) -> bool =
         weglet_ffi::weglet_set_search_engine;

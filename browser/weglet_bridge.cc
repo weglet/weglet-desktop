@@ -554,7 +554,7 @@ WegletBridge::RiskAssessment WegletBridge::AssessNavigation(
   char* reason = nullptr;
   char* host = nullptr;
   const uint32_t level =
-      weglet_assess_navigation(url.spec().c_str(), &title, &reason, &host);
+      weglet_assess_navigation(state_, url.spec().c_str(), &title, &reason, &host);
 
   RiskAssessment assessment;
   assessment.level = RiskFromLevel(level);
@@ -569,8 +569,8 @@ WegletBridge::RiskAssessment WegletBridge::AssessNavigation(
 WegletBridge::Risk WegletBridge::AssessNavigationLevel(const GURL& url) const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   // Nulls: the caller wants the decision, not the wording.
-  return RiskFromLevel(weglet_assess_navigation(url.spec().c_str(), nullptr,
-                                                nullptr, nullptr));
+  return RiskFromLevel(weglet_assess_navigation(state_, url.spec().c_str(),
+                                                nullptr, nullptr, nullptr));
 }
 
 bool WegletBridge::IsHostBlocked(const std::string& host) const {
@@ -582,12 +582,12 @@ WegletBridge::SettingsSnapshot WegletBridge::Settings() const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   SettingsSnapshot snapshot;
 
-  const size_t engine_count = weglet_engine_count();
+  const size_t engine_count = weglet_engine_count(state_);
   snapshot.engines.reserve(engine_count);
   for (size_t index = 0; index < engine_count; ++index) {
     snapshot.engines.push_back({
-        TakeString(weglet_engine_id_at(index)),
-        TakeString(weglet_engine_label_at(index)),
+        TakeString(weglet_engine_id_at(state_, index)),
+        TakeString(weglet_engine_label_at(state_, index)),
     });
   }
 

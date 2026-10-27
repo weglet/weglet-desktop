@@ -17,7 +17,7 @@ use std::ffi::c_char;
 
 use weglet_core::{AppState, OmniboxAction, TabId, WindowId};
 use weglet_profile::{
-    Bookmarks, BrowsingHistory, DownloadStatus, Downloads, Paths, Session, SessionTab,
+    Bookmarks, BrowsingHistory, DownloadStatus, Downloads, Engines, Paths, Session, SessionTab,
     SessionWindow, Settings, ThreatFeedCache,
 };
 
@@ -42,6 +42,11 @@ macro_rules! safety_doc {
 pub struct WegletState {
     state: AppState,
     settings: Settings,
+    // This profile's search engines and security lists: built in, or
+    // replaced by the profile's own files. Per profile, never a static:
+    // one process runs several profiles.
+    engines: Engines,
+    lists: weglet_security::Lists,
     bookmarks: Bookmarks,
     history: BrowsingHistory,
     downloads: Downloads,
@@ -79,12 +84,21 @@ fn build_state(profile: &str) -> WegletState {
     let paths = Paths::discover(profile).ok();
     let profile_name = profile.to_string();
 
+    // Optional per-profile data files, read before anything asks a
+    // question that depends on them. Present means the user's own list
+    // replaces the built-in one. A malformed file is ignored, never fatal.
+    let (engines, lists) = match &paths {
+        Some(paths) => load_overrides(paths),
+        None => (Engines::built_in(), weglet_security::Lists::built_in()),
+    };
+
     // A settings file that will not parse must not stop the browser from
     // opening. The C++ side logs it; here the fallback is defaults.
-    let settings = paths
+    let mut settings = paths
         .as_ref()
         .and_then(|paths| Settings::load(&paths.settings_file()).ok())
         .unwrap_or_default();
+    settings.fit_engines(&engines);
 
     let state = if settings.restore_session {
         paths
@@ -95,14 +109,6 @@ fn build_state(profile: &str) -> WegletState {
     } else {
         AppState::new()
     };
-
-    // Optional per-profile data files, applied before anything asks a
-    // question that depends on them. Present means the user's own list
-    // replaces the built-in one. A malformed file is ignored, never
-    // fatal.
-    if let Some(paths) = &paths {
-        load_overrides(paths);
-    }
 
     let bookmarks = paths
         .as_ref()
@@ -128,6 +134,8 @@ fn build_state(profile: &str) -> WegletState {
     WegletState {
         state,
         settings,
+        engines,
+        lists,
         bookmarks,
         history,
         downloads,
@@ -679,17 +687,21 @@ pub unsafe extern "C" fn weglet_omnibox_resolve(
 
     let url = match weglet_core::parse_omnibox(input) {
         OmniboxAction::Navigate(url) => url,
-        OmniboxAction::Search(query) => weglet_profile::query_url(
-            &state.settings.search_engine,
-            &query,
-            &state.settings.custom_search_url,
-        )
-        // A broken custom engine, or an id an override removed, falls
-        // back to the default: Enter has to go somewhere.
-        .unwrap_or_else(|| {
-            weglet_profile::query_url(weglet_profile::default_engine_id(), &query, "")
-                .expect("the default engine always produces a URL")
-        }),
+        OmniboxAction::Search(query) => state
+            .engines
+            .query_url(
+                &state.settings.search_engine,
+                &query,
+                &state.settings.custom_search_url,
+            )
+            // A broken custom engine, or an id an override removed, falls
+            // back to the default: Enter has to go somewhere.
+            .unwrap_or_else(|| {
+                state
+                    .engines
+                    .query_url(state.engines.default_id(), &query, "")
+                    .expect("the default engine always produces a URL")
+            }),
     };
     into_c_string(url)
 }
@@ -795,6 +807,7 @@ pub unsafe extern "C" fn weglet_omnibox_suggestion_is_bookmark_at(
 /// owned by the caller and freed with `weglet_string_free`.
 #[no_mangle]
 pub unsafe extern "C" fn weglet_assess_navigation(
+    state: *const WegletState,
     url: *const c_char,
     title: *mut *mut c_char,
     reason: *mut *mut c_char,
@@ -808,8 +821,11 @@ pub unsafe extern "C" fn weglet_assess_navigation(
         }
     };
 
-    // SAFETY: contract of str_from_c.
-    let risk = unsafe { str_from_c(url) }.and_then(weglet_security::assess_navigation);
+    // SAFETY: contract of as_ref and str_from_c.
+    let risk = unsafe { as_ref(state) }.and_then(|state| {
+        unsafe { str_from_c(url) }
+            .and_then(|url| weglet_security::assess_navigation(&state.lists, url))
+    });
 
     let Some(risk) = risk else {
         write(title, String::new());
@@ -894,7 +910,7 @@ pub unsafe extern "C" fn weglet_is_url_blocked(
 
 fn is_blocked(state: &WegletState, host: &str) -> bool {
     weglet_security::matches_user_blocklist(host, &state.settings.blocked_hosts)
-        || weglet_security::is_blocked_host(host)
+        || weglet_security::is_blocked_host(&state.lists, host)
 }
 
 // ---------------------------------------------------------------------
@@ -1013,7 +1029,7 @@ pub unsafe extern "C" fn weglet_new_tab_hint(state: *const WegletState) -> *mut 
     // SAFETY: contract of as_ref.
     let hint = unsafe { as_ref(state) }
         .map(|state| {
-            let engine = weglet_profile::engine_label(&state.settings.search_engine);
+            let engine = state.engines.label(&state.settings.search_engine);
             format!("Searches go to {engine}")
         })
         .unwrap_or_default();
@@ -1626,7 +1642,7 @@ pub unsafe extern "C" fn weglet_set_search_engine(
     // Checked against the table rather than a match arm per engine: an id
     // it does not contain is a page sending something no settings screen
     // offered.
-    if !weglet_profile::is_known_engine(id) {
+    if !state.engines.is_known(id) {
         return false;
     }
     state.settings.search_engine = id.to_string();
@@ -1637,17 +1653,19 @@ pub unsafe extern "C" fn weglet_set_search_engine(
 // The number of engines the settings page can offer; read it, then
 // weglet_engine_id_at / weglet_engine_label_at for 0..count. "custom" is
 // not in the list -- it is what the template box means.
+#[doc = safety_doc!()]
 #[no_mangle]
-pub extern "C" fn weglet_engine_count() -> usize {
-    weglet_profile::engines().len()
+pub unsafe extern "C" fn weglet_engine_count(state: *const WegletState) -> usize {
+    // SAFETY: contract of as_ref.
+    unsafe { as_ref(state) }.map_or(0, |state| state.engines.all().len())
 }
-
 
 #[doc = safety_doc!()]
 #[no_mangle]
-pub unsafe extern "C" fn weglet_engine_id_at(index: usize) -> *mut c_char {
-    let id = weglet_profile::engines()
-        .get(index)
+pub unsafe extern "C" fn weglet_engine_id_at(state: *const WegletState, index: usize) -> *mut c_char {
+    // SAFETY: contract of as_ref.
+    let id = unsafe { as_ref(state) }
+        .and_then(|state| state.engines.all().get(index))
         .map(|engine| engine.id.clone())
         .unwrap_or_default();
     into_c_string(id)
@@ -1655,9 +1673,13 @@ pub unsafe extern "C" fn weglet_engine_id_at(index: usize) -> *mut c_char {
 
 #[doc = safety_doc!()]
 #[no_mangle]
-pub unsafe extern "C" fn weglet_engine_label_at(index: usize) -> *mut c_char {
-    let label = weglet_profile::engines()
-        .get(index)
+pub unsafe extern "C" fn weglet_engine_label_at(
+    state: *const WegletState,
+    index: usize,
+) -> *mut c_char {
+    // SAFETY: contract of as_ref.
+    let label = unsafe { as_ref(state) }
+        .and_then(|state| state.engines.all().get(index))
         .map(|engine| engine.label.clone())
         .unwrap_or_default();
     into_c_string(label)
@@ -1937,19 +1959,22 @@ fn session_of(state: &AppState) -> Session {
 // Reads the four optional files a profile may carry. Errors are dropped:
 // weglet_state_new has no way to report them, and a malformed file leaves
 // the built-in list standing.
-fn load_overrides(paths: &Paths) {
+fn load_overrides(paths: &Paths) -> (Engines, weglet_security::Lists) {
+    let mut lists = weglet_security::Lists::built_in();
     if let Ok(text) = std::fs::read_to_string(paths.blocklist_file()) {
-        weglet_security::set_blocklist_override(&text);
+        lists.replace_blocklist(&text);
     }
     if let Ok(text) = std::fs::read_to_string(paths.brands_file()) {
-        let _ = weglet_security::set_brand_rules_override(&text);
+        let _ = lists.replace_brands(&text);
     }
     if let Ok(text) = std::fs::read_to_string(paths.sensitive_words_file()) {
-        weglet_security::set_sensitive_words_override(&text);
+        lists.replace_sensitive_words(&text);
     }
-    if let Ok(text) = std::fs::read_to_string(paths.engines_file()) {
-        let _ = weglet_profile::set_engines_override(&text);
-    }
+    let engines = std::fs::read_to_string(paths.engines_file())
+        .ok()
+        .and_then(|text| Engines::parse(&text).ok())
+        .unwrap_or_else(Engines::built_in);
+    (engines, lists)
 }
 
 impl WegletState {

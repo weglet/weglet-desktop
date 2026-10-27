@@ -179,7 +179,7 @@ fn out_of_range_indices_are_answered_not_trusted() {
     assert_eq!(take(unsafe { abi::blocked_host_at(state, 999) }), "");
     assert!(!unsafe { abi::close_tab(state, 999) });
     assert!(!unsafe { abi::unblock_host(state, 999) });
-    assert_eq!(take(unsafe { abi::engine_id_at(999) }), "");
+    assert_eq!(take(unsafe { abi::engine_id_at(state, 999) }), "");
     unsafe { abi::state_free(state) };
 }
 
@@ -212,8 +212,8 @@ fn the_omnibox_resolves_through_the_configured_engine() {
 
     // Every id the engine list offers has to be one set_search_engine
     // accepts.
-    for index in 0..abi::engine_count() {
-        let id = take(unsafe { abi::engine_id_at(index) });
+    for index in 0..unsafe { abi::engine_count(state) } {
+        let id = take(unsafe { abi::engine_id_at(state, index) });
         assert!(
             unsafe { abi::set_search_engine(state, c(&id).as_ptr()) },
             "engine {id} is offered but not accepted"
@@ -226,11 +226,13 @@ fn the_omnibox_resolves_through_the_configured_engine() {
 #[test]
 fn one_assessment_fills_every_out_param() {
     let _f = guard("risk");
+    let state = abi::state_new();
     let (mut title, mut reason, mut host) =
         (std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut());
 
     let level = unsafe {
         abi::assess_navigation(
+            state,
             c("https://gooogle.com/").as_ptr(),
             &mut title,
             &mut reason,
@@ -241,6 +243,7 @@ fn one_assessment_fills_every_out_param() {
     assert!(take(title).contains("Google"));
     assert!(!take(reason).is_empty());
     assert_eq!(take(host), "gooogle.com");
+    unsafe { abi::state_free(state) };
 }
 
 // The out-params are written even when there is no risk, so a caller
@@ -248,10 +251,12 @@ fn one_assessment_fills_every_out_param() {
 #[test]
 fn a_safe_url_still_writes_empty_strings() {
     let _f = guard("risk-none");
+    let state = abi::state_new();
     let (mut title, mut reason, mut host) =
         (std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut());
     let level = unsafe {
         abi::assess_navigation(
+            state,
             c("https://example.com/").as_ptr(),
             &mut title,
             &mut reason,
@@ -262,14 +267,17 @@ fn a_safe_url_still_writes_empty_strings() {
     assert_eq!(take(title), "");
     assert_eq!(take(reason), "");
     assert_eq!(take(host), "");
+    unsafe { abi::state_free(state) };
 }
 
 // A caller that wants only the level passes nothing to fill.
 #[test]
 fn null_out_params_are_allowed() {
     let _f = guard("risk-null");
+    let state = abi::state_new();
     let level = unsafe {
         abi::assess_navigation(
+            state,
             c("https://gooogle.com/").as_ptr(),
             std::ptr::null_mut(),
             std::ptr::null_mut(),
@@ -277,6 +285,7 @@ fn null_out_params_are_allowed() {
         )
     };
     assert_eq!(level, 2);
+    unsafe { abi::state_free(state) };
 }
 
 #[test]

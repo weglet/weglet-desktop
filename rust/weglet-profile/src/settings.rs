@@ -4,8 +4,6 @@
 
 use std::path::Path;
 
-use std::sync::OnceLock;
-
 use serde::{Deserialize, Serialize};
 
 use crate::Error;
@@ -34,8 +32,6 @@ struct EngineFile {
     engine: Vec<Engine>,
 }
 
-static ENGINE_OVERRIDE: OnceLock<Vec<Engine>> = OnceLock::new();
-
 fn parse_engines(text: &str) -> Result<Vec<Engine>, String> {
     let engines = toml::from_str::<EngineFile>(text)
         .map(|file| file.engine)
@@ -62,61 +58,67 @@ fn parse_engines(text: &str) -> Result<Vec<Engine>, String> {
     Ok(engines)
 }
 
-// Installs a table read from the profile, replacing the built-in one.
-// Rejected whole if anything in it is wrong: half a table is a settings
-// page offering engines that do not search.
-pub fn set_engines_override(text: &str) -> Result<(), String> {
-    let parsed = parse_engines(text)?;
-    let _ = ENGINE_OVERRIDE.set(parsed);
-    Ok(())
-}
+// The search engines a profile offers: the built-in table, or one the
+// profile supplies in its place. Owned by the profile rather than kept in a
+// static, since one process runs several profiles.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Engines(Vec<Engine>);
 
-pub fn engines() -> &'static [Engine] {
-    if let Some(overridden) = ENGINE_OVERRIDE.get() {
-        return overridden;
+impl Engines {
+    // The built-in file is checked by a test in this crate, so a malformed
+    // one fails the build rather than the browser.
+    pub fn built_in() -> Self {
+        Self(parse_engines(BUILT_IN_ENGINES).unwrap_or_default())
     }
-    static ENGINES: OnceLock<Vec<Engine>> = OnceLock::new();
-    // The built-in file is checked by a test in this crate, so a
-    // malformed one fails the build rather than the browser.
-    ENGINES.get_or_init(|| parse_engines(BUILT_IN_ENGINES).unwrap_or_default())
-}
 
-// The id a fresh profile is created with: the first in the table.
-pub fn default_engine_id() -> &'static str {
-    engines().first().map_or(CUSTOM_ENGINE_ID, |engine| engine.id.as_str())
-}
-
-pub fn engine_label(id: &str) -> &'static str {
-    if id == CUSTOM_ENGINE_ID {
-        return "your search engine";
+    // A table read from the profile. Rejected whole if anything in it is
+    // wrong: half a table is a settings page offering engines that do not
+    // search.
+    pub fn parse(text: &str) -> Result<Self, String> {
+        parse_engines(text).map(Self)
     }
-    engines()
-        .iter()
-        .find(|engine| engine.id == id)
-        .map_or("your search engine", |engine| engine.label.as_str())
-}
 
-pub fn is_known_engine(id: &str) -> bool {
-    id == CUSTOM_ENGINE_ID || engines().iter().any(|engine| engine.id == id)
-}
+    pub fn all(&self) -> &[Engine] {
+        &self.0
+    }
 
-// None when there is nothing to search with: an unknown id, or Custom with
-// no usable template.
-pub fn query_url(id: &str, query: &str, custom_template: &str) -> Option<String> {
-    let escaped = percent_encode_query(query);
-    let template = if id == CUSTOM_ENGINE_ID {
-        if !is_valid_custom_template(custom_template) {
-            return None;
+    // The id a fresh profile is created with: the first in the table.
+    pub fn default_id(&self) -> &str {
+        self.0.first().map_or(CUSTOM_ENGINE_ID, |engine| engine.id.as_str())
+    }
+
+    pub fn label(&self, id: &str) -> &str {
+        if id == CUSTOM_ENGINE_ID {
+            return "your search engine";
         }
-        custom_template
-    } else {
-        engines()
+        self.0
             .iter()
-            .find(|engine| engine.id == id)?
-            .template
-            .as_str()
-    };
-    Some(template.replacen("%s", &escaped, 1))
+            .find(|engine| engine.id == id)
+            .map_or("your search engine", |engine| engine.label.as_str())
+    }
+
+    pub fn is_known(&self, id: &str) -> bool {
+        id == CUSTOM_ENGINE_ID || self.0.iter().any(|engine| engine.id == id)
+    }
+
+    // None when there is nothing to search with: an unknown id, or Custom
+    // with no usable template.
+    pub fn query_url(&self, id: &str, query: &str, custom_template: &str) -> Option<String> {
+        let escaped = percent_encode_query(query);
+        let template = if id == CUSTOM_ENGINE_ID {
+            if !is_valid_custom_template(custom_template) {
+                return None;
+            }
+            custom_template
+        } else {
+            self.0
+                .iter()
+                .find(|engine| engine.id == id)?
+                .template
+                .as_str()
+        };
+        Some(template.replacen("%s", &escaped, 1))
+    }
 }
 
 // A template needs exactly one %s and has to be an http(s) URL with a
@@ -225,7 +227,7 @@ impl Default for Settings {
         Self {
             settings_flush_seconds: DEFAULT_SETTINGS_FLUSH_SECONDS,
             session_save_seconds: DEFAULT_SESSION_SAVE_SECONDS,
-            search_engine: default_engine_id().to_string(),
+            search_engine: Engines::built_in().default_id().to_string(),
             custom_search_url: String::new(),
             restore_session: true,
             blocked_hosts: Vec::new(),
@@ -287,20 +289,23 @@ impl Settings {
         if !is_valid_hex_color(&self.accent_color) {
             self.accent_color = DEFAULT_ACCENT.to_string();
         }
-        // An id no longer in the table -- an override removed it, or the
-        // file was edited. A stored preference nothing can act on is a
-        // search box that does nothing.
         self.settings_flush_seconds = self
             .settings_flush_seconds
             .clamp(MIN_INTERVAL_SECONDS, MAX_INTERVAL_SECONDS);
         self.session_save_seconds = self
             .session_save_seconds
             .clamp(MIN_INTERVAL_SECONDS, MAX_INTERVAL_SECONDS);
-        if !is_known_engine(&self.search_engine) {
-            self.search_engine = default_engine_id().to_string();
-        }
         if !is_valid_language_code(&self.language) {
             self.language = "en".to_string();
+        }
+    }
+
+    // An id no longer in the profile's table -- its engines file removed
+    // it, or the settings file was edited. A stored preference nothing can
+    // act on is a search box that does nothing.
+    pub fn fit_engines(&mut self, engines: &Engines) {
+        if !engines.is_known(&self.search_engine) {
+            self.search_engine = engines.default_id().to_string();
         }
     }
 
@@ -376,6 +381,24 @@ fn is_valid_language_code(value: &str) -> bool {
 mod tests {
     use super::*;
 
+    fn query_url(id: &str, query: &str, custom_template: &str) -> Option<String> {
+        Engines::built_in().query_url(id, query, custom_template)
+    }
+
+    #[test]
+    fn an_engine_the_table_lacks_falls_back_to_its_default() {
+        let engines = Engines::parse(
+            "[[engine]]\nid = \"only\"\nlabel = \"Only\"\ntemplate = \"https://only.example/?q=%s\"\n",
+        )
+        .unwrap();
+        let mut settings = Settings {
+            search_engine: "duckduckgo".to_string(),
+            ..Settings::default()
+        };
+        settings.fit_engines(&engines);
+        assert_eq!(settings.search_engine, "only");
+    }
+
     fn file(name: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("weglet-settings-{name}"));
         let _ = std::fs::remove_dir_all(&dir);
@@ -442,7 +465,7 @@ mod tests {
         crate::atomic::write(&path, "custom-search-url = \"https://example.com\"\n").unwrap();
         let settings = Settings::load(&path).unwrap();
         assert_eq!(settings.custom_search_url, "https://example.com");
-        assert_eq!(settings.search_engine, default_engine_id());
+        assert_eq!(settings.search_engine, Engines::built_in().default_id());
         assert!(settings.restore_session);
     }
 

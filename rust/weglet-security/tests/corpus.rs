@@ -3,7 +3,7 @@
 // Measures assess_navigation against a fixed set of real addresses, so a
 // change to the heuristics has a number attached. See corpus.txt.
 
-use weglet_security::{assess_navigation, RiskLevel};
+use weglet_security::{assess_navigation, Lists, RiskLevel};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Expect {
@@ -24,7 +24,7 @@ impl Expect {
 }
 
 fn actual(url: &str) -> Expect {
-    match assess_navigation(url) {
+    match assess_navigation(&Lists::built_in(), url) {
         None => Expect::Ok,
         Some(risk) => match risk.level {
             RiskLevel::Warning => Expect::Warn,
@@ -62,7 +62,7 @@ fn no_false_positives_on_legitimate_addresses() {
         total += 1;
         let got = actual(&url);
         if got != Expect::Ok {
-            let risk = assess_navigation(&url).unwrap();
+            let risk = assess_navigation(&Lists::built_in(), &url).unwrap();
             failures.push(format!("  {url}\n      {:?} -- {}", got, risk.title));
         }
     }

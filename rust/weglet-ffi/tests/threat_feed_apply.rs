@@ -71,3 +71,20 @@ fn disabling_the_feed_stops_it_matching_without_clearing_it() {
     assert!(unsafe { abi::is_known_phishing(state, c("https://evil0.example/login").as_ptr(), std::ptr::null_mut(), std::ptr::null_mut()) });
     unsafe { abi::state_free(state) };
 }
+
+// One process runs several profiles: a feed applied to one must not match
+// in another.
+#[test]
+fn a_feed_applied_to_one_profile_does_not_match_in_another() {
+    let _f = guard("threat-feed-isolated");
+    let applied = abi::state_new();
+    let other = unsafe { abi::state_new_for_profile(c("Work").as_ptr()) };
+    assert!(unsafe { abi::apply_threat_feed(applied, c(&feed_body()).as_ptr()) });
+    let url = c("https://evil0.example/login");
+    assert!(unsafe { abi::is_known_phishing(applied, url.as_ptr(), std::ptr::null_mut(), std::ptr::null_mut()) });
+    assert!(!unsafe { abi::is_known_phishing(other, url.as_ptr(), std::ptr::null_mut(), std::ptr::null_mut()) });
+    unsafe {
+        abi::state_free(applied);
+        abi::state_free(other);
+    }
+}

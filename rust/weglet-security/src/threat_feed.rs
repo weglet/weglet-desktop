@@ -140,7 +140,7 @@ mod tests {
     }
 
     #[test]
-    fn an_indicator_is_the_host_and_path_as_written() {
+    fn an_indicator_is_the_host_and_the_normalised_path() {
         assert_eq!(
             indicators_for_url("https://evil.example//login/"),
             ["evil.example|/login"]

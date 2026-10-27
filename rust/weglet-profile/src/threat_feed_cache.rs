@@ -24,8 +24,16 @@ pub struct ThreatFeedCache {
 }
 
 impl ThreatFeedCache {
+    // An empty cache never counts as updated: settings would otherwise
+    // report a recent successful update for a feed that matches nothing.
+    // A cache written before indicators were kept as text loads that way.
     pub fn load(path: &Path) -> Result<Self, Error> {
-        crate::store::load(path)
+        let mut cache: Self = crate::store::load(path)?;
+        if cache.indicators.is_empty() {
+            cache.updated_at = 0;
+            cache.source_count = 0;
+        }
+        Ok(cache)
     }
 
     pub fn save(&self, path: &Path) -> Result<(), Error> {
@@ -62,5 +70,19 @@ mod tests {
         };
         cache.save(&path).unwrap();
         assert_eq!(ThreatFeedCache::load(&path).unwrap(), cache);
+    }
+
+    #[test]
+    fn a_cache_of_hashes_from_an_older_weglet_loads_as_never_updated() {
+        let path = file("hashes");
+        crate::atomic::write(
+            &path,
+            r#"{"hashes": ["abc"], "source-count": 1, "updated-at": 1700000000}"#,
+        )
+        .unwrap();
+        let cache = ThreatFeedCache::load(&path).unwrap();
+        assert!(cache.indicators.is_empty());
+        assert_eq!(cache.updated_at, 0);
+        assert_eq!(cache.source_count, 0);
     }
 }

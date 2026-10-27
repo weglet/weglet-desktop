@@ -21,19 +21,48 @@ pub const DEFAULT_PROFILE: &str = "Default";
 // profile is chosen.
 const LAST_PROFILE_FILE: &str = "last-profile.txt";
 
+// Names Windows keeps for devices, with or without an extension: a
+// directory by one of these names is the device, not a directory.
+const RESERVED_NAMES: &[&str] = &[
+    "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
+    "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+];
+
 // A profile name becomes a path component directly, so it can't be
 // empty, a path traversal, or contain a separator either platform
 // understands. Bounded the same way a shortcut title's length isn't --
 // here it matters, since the whole thing has to fit on disk and in a
 // window title.
+//
+// Windows drops trailing dots and spaces from a path component, so "Work."
+// and "Work " open the directory "Work" under a different name, and "..."
+// opens the directory that holds every profile. A name is therefore
+// rejected rather than trimmed: the name a caller holds is the directory
+// it gets.
 pub fn is_valid_profile_name(name: &str) -> bool {
-    let trimmed = name.trim();
-    !trimmed.is_empty()
-        && trimmed.len() <= 64
-        && trimmed != "."
-        && trimmed != ".."
-        && !trimmed.contains(['/', '\\', ':', '*', '?', '"', '<', '>', '|'])
-        && !trimmed.chars().any(char::is_control)
+    let stem = name.split('.').next().unwrap_or_default();
+    !name.is_empty()
+        && name.len() <= 64
+        && name.trim() == name
+        && !name.ends_with('.')
+        && !name.contains(['/', '\\', ':', '*', '?', '"', '<', '>', '|'])
+        && !name.chars().any(char::is_control)
+        && !RESERVED_NAMES
+            .iter()
+            .any(|reserved| stem.trim_end().eq_ignore_ascii_case(reserved))
+}
+
+// The name of the existing profile `name` refers to. Windows compares
+// names without regard to case, so "work" opens the directory of a
+// profile listed as "Work": both have to be the same profile, or the list
+// offers to delete the one that is running. A name no profile has yet is
+// returned as it is.
+pub fn canonical_profile_name(name: &str) -> String {
+    let folded = name.to_lowercase();
+    Paths::list_profiles()
+        .into_iter()
+        .find(|existing| existing.to_lowercase() == folded)
+        .unwrap_or_else(|| name.to_string())
 }
 
 impl Paths {
@@ -44,7 +73,7 @@ impl Paths {
     pub fn discover(profile: &str) -> Result<Self, crate::Error> {
         let root = platform_root().ok_or(crate::Error::NoProfileDirectory)?;
         let name = if is_valid_profile_name(profile) {
-            profile.trim()
+            profile
         } else {
             DEFAULT_PROFILE
         };
@@ -268,8 +297,21 @@ mod tests {
         assert!(is_valid_profile_name(&"a".repeat(64)));
     }
 
+    // Windows would drop the trailing part and open a different directory.
     #[test]
-    fn surrounding_whitespace_does_not_change_validity() {
-        assert!(is_valid_profile_name("  Work  "));
+    fn a_name_windows_would_change_on_disk_is_invalid() {
+        for name in ["Work.", "Work ", " Work", "...", "a.."] {
+            assert!(!is_valid_profile_name(name), "{name:?}");
+        }
+    }
+
+    #[test]
+    fn a_device_name_is_invalid_in_any_case_and_with_an_extension() {
+        for name in ["CON", "nul", "Com1", "LPT9", "aux.txt", "NUL .x"] {
+            assert!(!is_valid_profile_name(name), "{name}");
+        }
+        for name in ["Console", "Nullable", "COM10"] {
+            assert!(is_valid_profile_name(name), "{name}");
+        }
     }
 }

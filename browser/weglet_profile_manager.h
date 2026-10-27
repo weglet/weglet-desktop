@@ -50,6 +50,14 @@ class WegletProfileManager {
   // counts on top of the existing global one.
   Instance& GetOrCreate(const std::string& profile_name);
 
+  // Whether `profile_name` has an instance in this process. Compared in the
+  // profile's own spelling -- see WegletBridge::CanonicalProfileName.
+  bool Has(const std::string& profile_name) const;
+
+  // Every window of every profile is about to close because the browser
+  // is quitting -- see WegletBridge::KeepWindowsOnClose.
+  void KeepWindowsOnClose();
+
   void FlushDirtySettings();
   void SaveAllSessions();
 

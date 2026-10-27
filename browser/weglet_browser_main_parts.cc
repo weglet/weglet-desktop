@@ -54,10 +54,10 @@ std::string ResolveProfileName() {
   const std::string requested =
       base::CommandLine::ForCurrentProcess()->GetSwitchValueUTF8(kProfileSwitch);
   if (!requested.empty() && WegletBridge::IsValidProfileName(requested)) {
-    return requested;
+    return WegletBridge::CanonicalProfileName(requested);
   }
   const std::string last = WegletBridge::LastProfile();
-  return last.empty() ? "Default" : last;
+  return last.empty() ? "Default" : WegletBridge::CanonicalProfileName(last);
 }
 
 }  // namespace
@@ -94,6 +94,15 @@ int WegletBrowserMainParts::PreMainMessageLoopRun() {
       &WegletBrowserMainParts::SwitchToProfile, weak_factory_.GetWeakPtr()));
   WegletWindow::SetOpenProfileWindowHandler(base::BindRepeating(
       &WegletBrowserMainParts::OpenProfileWindow, weak_factory_.GetWeakPtr()));
+  // A weak pointer as an argument rather than the receiver: a callback
+  // bound to a weak receiver cannot return a value.
+  WegletWindow::SetProfileInUseCheck(base::BindRepeating(
+      [](base::WeakPtr<WegletBrowserMainParts> parts,
+         const std::string& profile_name) {
+        return parts && parts->profile_manager_ &&
+               parts->profile_manager_->Has(profile_name);
+      },
+      weak_factory_.GetWeakPtr()));
 
   settings_flush_timer_.Start(
       FROM_HERE, initial.bridge->SettingsFlushInterval(),
@@ -143,10 +152,12 @@ void WegletBrowserMainParts::SaveSession() {
   }
 }
 
-void WegletBrowserMainParts::SwitchToProfile(const std::string& profile_name) {
-  if (!WegletBridge::IsValidProfileName(profile_name)) {
+void WegletBrowserMainParts::SwitchToProfile(const std::string& requested_name) {
+  if (!WegletBridge::IsValidProfileName(requested_name)) {
     return;
   }
+  const std::string profile_name =
+      WegletBridge::CanonicalProfileName(requested_name);
 
   WegletBridge::SetLastProfile(profile_name);
 
@@ -158,16 +169,29 @@ void WegletBrowserMainParts::SwitchToProfile(const std::string& profile_name) {
   // Closing every window drops the count to zero, which runs the quit
   // closure WillRunMainMessageLoop installed -- see
   // WegletWindow::QuitIfLastWindow. PostMainMessageLoopRun flushes
-  // settings and the session on the way out, same as any other quit.
+  // settings and the session on the way out, same as any other quit; every
+  // window stays in its model on the way, so the session keeps them all.
+  profile_manager_->KeepWindowsOnClose();
   WegletWindow::CloseAllWindows();
 }
 
-void WegletBrowserMainParts::OpenProfileWindow(const std::string& profile_name) {
-  if (!profile_manager_ || !WegletBridge::IsValidProfileName(profile_name)) {
+void WegletBrowserMainParts::OpenProfileWindow(const std::string& requested_name) {
+  if (!profile_manager_ || !WegletBridge::IsValidProfileName(requested_name)) {
     return;
   }
-  WegletProfileManager::Instance& instance = profile_manager_->GetOrCreate(profile_name);
-  WegletWindow::OpenNewWindow(instance.browser_context.get(), instance.bridge.get());
+  WegletProfileManager::Instance& instance = profile_manager_->GetOrCreate(
+      WegletBridge::CanonicalProfileName(requested_name));
+  if (WegletWindow::HasWindowFor(instance.bridge.get())) {
+    WegletWindow::OpenNewWindow(instance.browser_context.get(),
+                                instance.bridge.get());
+    return;
+  }
+  // Built this run, or every window closed since: its model still holds
+  // the windows it had, and showing the profile shows them again.
+  for (uint64_t window : instance.bridge->Windows()) {
+    WegletWindow::CreateAndShow(instance.browser_context.get(),
+                                instance.bridge.get(), window);
+  }
 }
 
 void WegletBrowserMainParts::PostMainMessageLoopRun() {

@@ -70,6 +70,16 @@ WegletProfileManager::Instance& WegletProfileManager::GetOrCreate(
   return ref;
 }
 
+bool WegletProfileManager::Has(const std::string& profile_name) const {
+  return instances_.contains(WegletBridge::CanonicalProfileName(profile_name));
+}
+
+void WegletProfileManager::KeepWindowsOnClose() {
+  for (auto& [name, instance] : instances_) {
+    instance->bridge->KeepWindowsOnClose();
+  }
+}
+
 void WegletProfileManager::FlushDirtySettings() {
   for (auto& [name, instance] : instances_) {
     if (instance->bridge && instance->bridge->SettingsDirty() &&

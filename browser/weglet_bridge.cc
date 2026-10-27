@@ -83,6 +83,11 @@ bool WegletBridge::IsValidProfileName(const std::string& name) {
   return weglet_is_valid_profile_name(name.c_str());
 }
 
+// static
+std::string WegletBridge::CanonicalProfileName(const std::string& name) {
+  return TakeString(weglet_canonical_profile_name(name.c_str()));
+}
+
 std::string WegletBridge::CurrentProfile() const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   return TakeString(weglet_current_profile(state_));
@@ -153,6 +158,11 @@ uint64_t WegletBridge::OpenWindow() {
 bool WegletBridge::CloseWindow(uint64_t window) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   return weglet_close_window(state_, window);
+}
+
+void WegletBridge::KeepWindowsOnClose() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  weglet_keep_windows_on_close(state_);
 }
 
 uint64_t WegletBridge::TabWindow(uint64_t id) const {

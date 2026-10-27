@@ -70,32 +70,45 @@ fn closing_the_last_window_keeps_its_tabs_for_the_next_launch() {
 }
 
 #[test]
-fn a_window_opened_after_the_last_one_closed_is_what_gets_saved() {
-    let _f = guard("reopened");
+fn quitting_with_several_windows_keeps_every_one_for_the_next_launch() {
+    let _f = guard("quit-all");
     let state = abi::state_new();
-    let w = unsafe { abi::window_id_at(state, 0) };
-    let id = unsafe { abi::active_tab_id(state, w) };
+    let first = unsafe { abi::window_id_at(state, 0) };
+    let id = unsafe { abi::active_tab_id(state, first) };
     navigate(state, id, "https://a.example");
-    assert!(unsafe { abi::close_window(state, w) });
-
-    let reopened = unsafe { abi::open_window(state) };
-    let id = unsafe { abi::active_tab_id(state, reopened) };
+    let second = unsafe { abi::open_window(state) };
+    let id = unsafe { abi::active_tab_id(state, second) };
     navigate(state, id, "https://b.example");
+
+    unsafe { abi::keep_windows_on_close(state) };
+    assert!(unsafe { abi::close_window(state, first) });
+    assert!(unsafe { abi::close_window(state, second) });
     assert!(unsafe { abi::save_session(state) });
     unsafe { abi::state_free(state) };
 
     let restored = abi::state_new();
-    let urls: Vec<String> = (0..unsafe { abi::window_count(restored) })
-        .flat_map(|index| {
+    assert_eq!(unsafe { abi::window_count(restored) }, 2);
+    let urls: Vec<String> = (0..2)
+        .map(|index| {
             let w = unsafe { abi::window_id_at(restored, index) };
-            (0..unsafe { abi::tab_count(restored, w) })
-                .map(move |position| unsafe { abi::tab_id_at(restored, w, position) })
+            take(unsafe { abi::tab_url(restored, abi::active_tab_id(restored, w)) })
         })
-        .map(|id| take(unsafe { abi::tab_url(restored, id) }))
         .collect();
-    assert!(urls.contains(&"https://b.example".to_string()), "{urls:?}");
-    assert!(!urls.contains(&"https://a.example".to_string()), "{urls:?}");
+    assert_eq!(urls, ["https://a.example", "https://b.example"]);
     unsafe { abi::state_free(restored) };
+}
+
+// Closing one of several windows is closing it: the session drops it.
+#[test]
+fn closing_one_of_several_windows_drops_it_from_the_session() {
+    let _f = guard("close-one");
+    let state = abi::state_new();
+    let first = unsafe { abi::window_id_at(state, 0) };
+    let second = unsafe { abi::open_window(state) };
+    assert!(unsafe { abi::close_window(state, first) });
+    assert_eq!(unsafe { abi::window_count(state) }, 1);
+    assert_eq!(unsafe { abi::window_id_at(state, 0) }, second);
+    unsafe { abi::state_free(state) };
 }
 
 // A restored tab hands its whole list to the engine, and Back in it goes
@@ -700,6 +713,16 @@ fn is_valid_profile_name_matches_the_crate_rule() {
     assert!(!unsafe { abi::is_valid_profile_name(c("").as_ptr()) });
     assert!(!unsafe { abi::is_valid_profile_name(c("a/b").as_ptr()) });
     assert!(!unsafe { abi::is_valid_profile_name(std::ptr::null()) });
+}
+
+// On Windows "work" opens Work's directory: the two have to be one profile.
+#[test]
+fn a_name_differing_only_in_case_is_the_existing_profile() {
+    let f = guard("canonical-profile");
+    std::fs::create_dir_all(f.dir.join("Weglet").join("Work")).unwrap();
+    assert_eq!(take(unsafe { abi::canonical_profile_name(c("work").as_ptr()) }), "Work");
+    assert_eq!(take(unsafe { abi::canonical_profile_name(c("WORK").as_ptr()) }), "Work");
+    assert_eq!(take(unsafe { abi::canonical_profile_name(c("Home").as_ptr()) }), "Home");
 }
 
 #[test]

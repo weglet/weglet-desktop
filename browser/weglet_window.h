@@ -110,6 +110,18 @@ class WegletWindow : public views::WidgetDelegate,
       base::RepeatingCallback<void(const std::string&)> handler);
   void RequestOpenProfileWindow(const std::string& profile_name);
 
+  // Set once by WegletBrowserMainParts. True when `profile_name` is open in
+  // this process, in a window or not: its directory is in use, and
+  // deleting or renaming it would pull files out from under a live
+  // context. False when no handler is set.
+  static void SetProfileInUseCheck(
+      base::RepeatingCallback<bool(const std::string&)> check);
+  static bool IsProfileInUse(const std::string& profile_name);
+
+  // Whether any window shows `bridge`'s model -- a profile with none is
+  // shown again from the windows its model kept.
+  static bool HasWindowFor(const WegletBridge* bridge);
+
   // Writes a desktop .lnk that launches this exe with
   // --profile=<profile_name>, off the UI thread -- shortcut creation is
   // blocking COM/file work, which the UI thread disallows post-startup.

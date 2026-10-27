@@ -35,6 +35,8 @@ pub mod abi {
         weglet_ffi::weglet_profile_name_at;
     pub const is_valid_profile_name: unsafe extern "C" fn(*const c_char) -> bool =
         weglet_ffi::weglet_is_valid_profile_name;
+    pub const canonical_profile_name: unsafe extern "C" fn(*const c_char) -> *mut c_char =
+        weglet_ffi::weglet_canonical_profile_name;
     pub const delete_profile: unsafe extern "C" fn(*const c_char) -> bool =
         weglet_ffi::weglet_delete_profile;
     pub const rename_profile: unsafe extern "C" fn(*const c_char, *const c_char) -> bool =
@@ -55,6 +57,8 @@ pub mod abi {
         weglet_ffi::weglet_close_window;
     pub const save_session: unsafe extern "C" fn(*const WegletState) -> bool =
         weglet_ffi::weglet_save_session;
+    pub const keep_windows_on_close: unsafe extern "C" fn(*mut WegletState) =
+        weglet_ffi::weglet_keep_windows_on_close;
     pub const tab_window: unsafe extern "C" fn(*const WegletState, u64) -> u64 =
         weglet_ffi::weglet_tab_window;
 

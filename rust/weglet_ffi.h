@@ -41,10 +41,15 @@ size_t weglet_window_count(const WegletState* state);
 uint64_t weglet_window_id_at(const WegletState* state, size_t index);
 // The new window's id, or 0 at the ceiling. Starts with one blank tab.
 uint64_t weglet_open_window(WegletState* state);
-// Its tabs go with it. Closing the last window leaves a fresh one, and
-// weglet_save_session keeps saving what the closed window held until a
-// window opens again.
+// Its tabs go with it, except for the last window, which stays in the
+// model with its tabs: the session restores it, and showing the profile
+// again brings it back. After weglet_keep_windows_on_close, every window
+// stays.
 bool weglet_close_window(WegletState* state, uint64_t window);
+// Every window is about to close because the browser is quitting: each one
+// stays in the model, so the session keeps all of them. Undone by
+// weglet_open_window.
+void weglet_keep_windows_on_close(WegletState* state);
 // Which window a tab is in, or 0 for no such tab.
 uint64_t weglet_tab_window(const WegletState* state, uint64_t id);
 
@@ -225,6 +230,10 @@ char* weglet_profile_name_at(size_t index);
 // Whether `name` could become a profile directory -- checked before
 // offering to create or switch to it.
 bool weglet_is_valid_profile_name(const char* name);
+// The existing profile `name` refers to, in its own spelling: Windows
+// compares names without regard to case, so "work" is the profile "Work".
+// `name` itself when no profile has it yet. Owned by the caller.
+char* weglet_canonical_profile_name(const char* name);
 // Deletes a profile's whole directory. Never call this with the name of
 // the profile the calling process is itself running as.
 bool weglet_delete_profile(const char* name);

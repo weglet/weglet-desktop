@@ -303,7 +303,10 @@ void WegletMessageHandler::Dispatch(std::string_view name,
   if (name == "renameProfile") {
     const std::string old_name = StringAt(args, 0);
     const std::string new_name = StringAt(args, 1);
-    if (old_name != bridge_->CurrentProfile() &&
+    // Any profile open in this process, not only this window's: several
+    // can be live at once, and each holds its directory open.
+    if (!WegletWindow::IsProfileInUse(old_name) &&
+        !WegletWindow::IsProfileInUse(new_name) &&
         WegletBridge::RenameProfile(old_name, new_name)) {
       state_->Notify(WegletStateService::kSettings);
     }
@@ -311,7 +314,8 @@ void WegletMessageHandler::Dispatch(std::string_view name,
   }
   if (name == "deleteProfile") {
     const std::string profile = StringAt(args, 0);
-    if (profile != bridge_->CurrentProfile() && WegletBridge::DeleteProfile(profile)) {
+    if (!WegletWindow::IsProfileInUse(profile) &&
+        WegletBridge::DeleteProfile(profile)) {
       state_->Notify(WegletStateService::kSettings);
     }
     return;

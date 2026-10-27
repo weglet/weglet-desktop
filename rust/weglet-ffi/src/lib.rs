@@ -55,11 +55,10 @@ pub struct WegletState {
     // never persisted. Not `dirty`-tracked like the stores above -- it is
     // derived from them, not a store of its own.
     omnibox_suggestions: Vec<weglet_core::OmniboxSuggestion>,
-    // The session as it stood when the last window closed, saved in place
-    // of the live state until a window opens again. Closing the last
-    // window resets the model to one blank tab, and every way of quitting
-    // closes the last window before the final save.
-    closed_session: Option<Session>,
+    // Set while every window closes because the browser is quitting: each
+    // one stays in the model, tabs and all, so the session keeps all of
+    // them rather than only the one that happened to close last.
+    keep_windows_on_close: bool,
     // Set when the matching store changed and has not reached the disk
     // yet. An atomic write ends in fsync, and the moment something
     // changed -- a click, a navigation, a download progress callback --
@@ -136,7 +135,7 @@ fn build_state(profile: &str) -> WegletState {
         paths,
         profile_name,
         omnibox_suggestions: Vec::new(),
-        closed_session: None,
+        keep_windows_on_close: false,
         settings_dirty: false,
         bookmarks_dirty: false,
         history_dirty: false,
@@ -209,6 +208,18 @@ pub extern "C" fn weglet_profile_name_at(index: usize) -> *mut c_char {
 pub unsafe extern "C" fn weglet_is_valid_profile_name(name: *const c_char) -> bool {
     // SAFETY: contract of str_from_c.
     unsafe { str_from_c(name) }.is_some_and(weglet_profile::is_valid_profile_name)
+}
+
+// The existing profile `name` refers to, in its own spelling, or `name`
+// itself when no profile has it yet. Empty for a null or non-UTF-8 name.
+#[doc = safety_doc!()]
+#[no_mangle]
+pub unsafe extern "C" fn weglet_canonical_profile_name(name: *const c_char) -> *mut c_char {
+    // SAFETY: contract of str_from_c.
+    let name = unsafe { str_from_c(name) }
+        .map(weglet_profile::canonical_profile_name)
+        .unwrap_or_default();
+    into_c_string(name)
 }
 
 // Deletes a profile's whole directory. Never call this with the name of
@@ -332,12 +343,14 @@ pub unsafe extern "C" fn weglet_open_window(state: *mut WegletState) -> u64 {
     let Some(window) = state.state.open_window() else {
         return 0;
     };
-    state.closed_session = None;
+    state.keep_windows_on_close = false;
     window.value()
 }
 
-// Its tabs go with it. Closing the last window leaves a fresh one, and
-// the session keeps what the closed window held -- see closed_session.
+// Its tabs go with it, except for the last window, which stays in the
+// model with its tabs: the session restores it, and showing the profile
+// again brings it back. After weglet_keep_windows_on_close, every window
+// stays.
 #[doc = safety_doc!()]
 #[no_mangle]
 pub unsafe extern "C" fn weglet_close_window(state: *mut WegletState, window: u64) -> bool {
@@ -346,11 +359,22 @@ pub unsafe extern "C" fn weglet_close_window(state: *mut WegletState, window: u6
         return false;
     };
     let window = WindowId::new(window);
-    let is_last = state.state.windows().len() == 1 && state.state.window(window).is_some();
-    if is_last {
-        state.closed_session = Some(session_of(&state.state));
+    if state.keep_windows_on_close {
+        return state.state.window(window).is_some();
     }
     state.state.close_window(window)
+}
+
+// Every window is about to close because the browser is quitting: each
+// one stays in the model, so the session keeps all of them. Undone by
+// weglet_open_window.
+#[doc = safety_doc!()]
+#[no_mangle]
+pub unsafe extern "C" fn weglet_keep_windows_on_close(state: *mut WegletState) {
+    // SAFETY: contract of as_mut.
+    if let Some(state) = unsafe { as_mut(state) } {
+        state.keep_windows_on_close = true;
+    }
 }
 
 // Which window a tab is in, or 0 for no such tab.
@@ -1867,11 +1891,7 @@ pub unsafe extern "C" fn weglet_save_session(state: *const WegletState) -> bool 
         return false;
     };
 
-    let session = match &state.closed_session {
-        Some(closed) => closed.clone(),
-        None => session_of(&state.state),
-    };
-    session.save(&paths.session_file()).is_ok()
+    session_of(&state.state).save(&paths.session_file()).is_ok()
 }
 
 fn session_of(state: &AppState) -> Session {

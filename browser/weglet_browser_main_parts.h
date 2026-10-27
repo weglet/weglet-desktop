@@ -82,11 +82,12 @@ class WegletBrowserMainParts : public content::BrowserMainParts {
   // this one's own pending writes first, then closes every window --
   // which quits this instance once the last one does. A name
   // WegletBridge::IsValidProfileName rejects is a no-op.
-  void SwitchToProfile(const std::string& profile_name);
+  void SwitchToProfile(const std::string& requested_name);
 
-  // Opens a new window into `profile_name`, building its context and
-  // bridge first if no window has used it yet this run.
-  void OpenProfileWindow(const std::string& profile_name);
+  // Opens a window into `requested_name`, building its context and bridge
+  // first if no window has used it yet this run. A profile with no window
+  // open shows the windows its model kept instead of a new blank one.
+  void OpenProfileWindow(const std::string& requested_name);
 
 #if defined(USE_AURA)
   // Aura needs all three before any Widget is created, and they outlive

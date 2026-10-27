@@ -98,6 +98,11 @@ base::RepeatingCallback<void(const std::string&)>& OpenProfileWindowHandler() {
   return *handler;
 }
 
+base::RepeatingCallback<bool(const std::string&)>& ProfileInUseCheck() {
+  static base::NoDestructor<base::RepeatingCallback<bool(const std::string&)>> check;
+  return *check;
+}
+
 // Every live window, in creation order. Used only by CloseAllWindows --
 // see RequestProfileSwitch.
 std::vector<WegletWindow*>& AllWindowsRegistry() {
@@ -233,6 +238,24 @@ void WegletWindow::RequestOpenProfileWindow(const std::string& profile_name) {
   if (OpenProfileWindowHandler()) {
     OpenProfileWindowHandler().Run(profile_name);
   }
+}
+
+// static
+void WegletWindow::SetProfileInUseCheck(
+    base::RepeatingCallback<bool(const std::string&)> check) {
+  ProfileInUseCheck() = std::move(check);
+}
+
+// static
+bool WegletWindow::IsProfileInUse(const std::string& profile_name) {
+  return ProfileInUseCheck() && ProfileInUseCheck().Run(profile_name);
+}
+
+// static
+bool WegletWindow::HasWindowFor(const WegletBridge* bridge) {
+  return std::ranges::any_of(AllWindowsRegistry(), [bridge](WegletWindow* window) {
+    return window->bridge_ == bridge;
+  });
 }
 
 // static

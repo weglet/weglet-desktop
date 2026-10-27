@@ -125,6 +125,10 @@ class WegletBridge {
   // separators, nothing a filesystem would reject. Static: callable
   // before any WegletBridge exists, to resolve --profile at startup.
   static bool IsValidProfileName(const std::string& name);
+  // The existing profile `name` refers to, in its own spelling: Windows
+  // compares names without regard to case, so "work" is the profile
+  // "Work". `name` itself when no profile has it yet.
+  static std::string CanonicalProfileName(const std::string& name);
 
   // This instance's own profile name -- "Default" if none was given or
   // the one given was invalid.
@@ -144,6 +148,9 @@ class WegletBridge {
   // 0 when the window ceiling is reached.
   uint64_t OpenWindow();
   bool CloseWindow(uint64_t window);
+  // Every window is about to close because the browser is quitting: each
+  // stays in the model, so the session keeps all of them.
+  void KeepWindowsOnClose();
   // Which window a tab is in, or 0 for no such tab.
   uint64_t TabWindow(uint64_t id) const;
 

@@ -65,6 +65,8 @@ class WegletStateService : public base::SupportsUserData::Data {
     kTheme = 1 << 7,
     // A find-in-page reply arrived for the tab the find bar is open on.
     kFindResult = 1 << 8,
+    // The address bar's dropdown has new rows or a new highlight.
+    kOmniboxSuggestions = 1 << 9,
   };
 
   // Creates the service and hands it to `browser_context`, which owns it.

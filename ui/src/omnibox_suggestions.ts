@@ -2,8 +2,8 @@
 //
 // The address bar's dropdown: bookmarks and history matching what is
 // typed. Its own floating popup, not DOM inside the toolbar's own page --
-// see WegletOmniboxSuggestionsPopup, reloaded on every keystroke like the
-// context menu, so there is no diffing to get wrong.
+// see WegletOmniboxSuggestionsPopup. Loaded once; every keystroke pushes a
+// new list, which replaces the rows whole.
 
 import { byId, el, runPage } from "./dom.js";
 import { setIcon } from "./icons.js";

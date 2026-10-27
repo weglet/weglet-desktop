@@ -128,8 +128,11 @@ bool WegletStateService::Affects(uint32_t changes, contract::PageKind kind) {
     case contract::PageKind::kPermissionPrompt:
     case contract::PageKind::kSiteInfo:
     case contract::PageKind::kToast:
-    case contract::PageKind::kOmniboxSuggestions:
       return false;
+    case contract::PageKind::kOmniboxSuggestions:
+      // Like the find bar: new rows on every keystroke, while it stays
+      // open.
+      return (changes & kOmniboxSuggestions) != 0;
     case contract::PageKind::kHistory:
       return (changes & kHistory) != 0;
     case contract::PageKind::kBookmarks:

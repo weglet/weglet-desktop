@@ -83,6 +83,14 @@ void WegletOmniboxSuggestionsPopup::EnsureWidget() {
   widget_->SetContentsView(std::move(web_view));
   web_view_ = web_view_ptr;
   web_view_->SetWebContents(contents_.get());
+
+  // Loaded once. Each keystroke after this is a push to the page already
+  // there: a reload per keystroke is a new document every time the list
+  // changes.
+  content::NavigationController::LoadURLParams load(
+      PageUrl(contract::kOmniboxSuggestionsPath));
+  load.transition_type = ui::PAGE_TRANSITION_AUTO_TOPLEVEL;
+  contents_->GetController().LoadURLWithParams(load);
 }
 
 void WegletOmniboxSuggestionsPopup::Show(std::vector<Suggestion> items,
@@ -93,13 +101,11 @@ void WegletOmniboxSuggestionsPopup::Show(std::vector<Suggestion> items,
   const int item_count = static_cast<int>(items.size());
   state_->SetPendingOmniboxSuggestions(
       contents_.get(), {std::move(items), highlighted_index});
-
-  // Reloaded so the page's own script re-runs against the fresh list --
-  // same reasoning as WegletToastPopup and WegletContextMenu.
-  content::NavigationController::LoadURLParams load(
-      PageUrl(contract::kOmniboxSuggestionsPath));
-  load.transition_type = ui::PAGE_TRANSITION_AUTO_TOPLEVEL;
-  contents_->GetController().LoadURLWithParams(load);
+  // Now rather than at the end of this turn: the page should hold the new
+  // rows before the widget shows it again. A page still loading asks for
+  // them itself once its script runs.
+  state_->Notify(WegletStateService::kOmniboxSuggestions);
+  state_->FlushNow();
 
   widget_->SetBounds(BoundsFor(item_count, anchor_left, anchor_bottom));
   widget_->Show();

@@ -43,7 +43,8 @@ class WegletOmniboxSuggestionsPopup : public views::WidgetDelegate,
   WegletOmniboxSuggestionsPopup& operator=(const WegletOmniboxSuggestionsPopup&) = delete;
   ~WegletOmniboxSuggestionsPopup() override;
 
-  // Creates the widget on first use; otherwise repositions, reloads and
+  // Creates the widget and loads its page on first use; after that,
+  // pushes the new rows to the page already there, repositions and
   // re-shows it. `anchor_left`/`anchor_bottom` are the address bar's own
   // on-screen rect, in the toolbar page's own coordinates.
   void Show(std::vector<Suggestion> items, int highlighted_index,

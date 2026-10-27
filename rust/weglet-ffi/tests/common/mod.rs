@@ -203,12 +203,25 @@ pub mod abi {
         weglet_ffi::weglet_download_error_message_at;
     pub const download_path_at: unsafe extern "C" fn(*const WegletState, usize) -> *mut c_char =
         weglet_ffi::weglet_download_path_at;
-    pub const download_started: unsafe extern "C" fn(*mut WegletState, *const c_char, *const c_char) =
-        weglet_ffi::weglet_download_started;
-    pub const download_progress: unsafe extern "C" fn(*mut WegletState, *const c_char, u64, i64) =
-        weglet_ffi::weglet_download_progress;
-    pub const download_completed: unsafe extern "C" fn(*mut WegletState, *const c_char, u64) =
-        weglet_ffi::weglet_download_completed;
+    pub const download_started: unsafe extern "C" fn(
+        *mut WegletState,
+        *const c_char,
+        *const c_char,
+        *const c_char,
+    ) = weglet_ffi::weglet_download_started;
+    pub const download_progress: unsafe extern "C" fn(
+        *mut WegletState,
+        *const c_char,
+        *const c_char,
+        u64,
+        i64,
+    ) = weglet_ffi::weglet_download_progress;
+    pub const download_completed: unsafe extern "C" fn(
+        *mut WegletState,
+        *const c_char,
+        *const c_char,
+        u64,
+    ) = weglet_ffi::weglet_download_completed;
     pub const download_failed: unsafe extern "C" fn(*mut WegletState, *const c_char, *const c_char) =
         weglet_ffi::weglet_download_failed;
     pub const clear_download_history: unsafe extern "C" fn(*mut WegletState) =

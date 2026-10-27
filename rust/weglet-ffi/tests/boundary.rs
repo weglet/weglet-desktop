@@ -576,19 +576,22 @@ fn omnibox_suggestions_are_empty_for_a_blank_query_and_out_of_range_reads_are_de
 fn a_download_moves_from_in_progress_to_completed() {
     let _f = guard("downloads");
     let state = abi::state_new();
-    let url = c("https://example.com/a.zip");
+    let guid = c("g-1");
+    let path = c("/tmp/a.zip");
 
-    unsafe { abi::download_started(state, url.as_ptr(), c("/tmp/a.zip").as_ptr()) };
+    unsafe {
+        abi::download_started(state, guid.as_ptr(), c("https://example.com/a.zip").as_ptr(), path.as_ptr())
+    };
     assert_eq!(unsafe { abi::download_count(state) }, 1);
     assert_eq!(unsafe { abi::download_status_at(state, 0) }, 0);
 
-    unsafe { abi::download_progress(state, url.as_ptr(), 1024, 4096) };
+    unsafe { abi::download_progress(state, guid.as_ptr(), path.as_ptr(), 1024, 4096) };
     assert_eq!(
         take(unsafe { abi::download_size_label_at(state, 0) }),
         "1.0 KB of 4.0 KB"
     );
 
-    unsafe { abi::download_completed(state, url.as_ptr(), 4096) };
+    unsafe { abi::download_completed(state, guid.as_ptr(), path.as_ptr(), 4096) };
     assert_eq!(unsafe { abi::download_status_at(state, 0) }, 1);
     assert_eq!(take(unsafe { abi::download_size_label_at(state, 0) }), "4.0 KB");
     unsafe { abi::state_free(state) };
@@ -598,10 +601,10 @@ fn a_download_moves_from_in_progress_to_completed() {
 fn a_failed_download_carries_the_real_error_message() {
     let _f = guard("downloads-failed");
     let state = abi::state_new();
-    let url = c("https://example.com/b.zip");
+    let guid = c("g-1");
     unsafe {
-        abi::download_started(state, url.as_ptr(), c("/tmp/b.zip").as_ptr());
-        abi::download_failed(state, url.as_ptr(), c("Server returned an error (HTTP 404)").as_ptr());
+        abi::download_started(state, guid.as_ptr(), c("https://example.com/b.zip").as_ptr(), c("/tmp/b.zip").as_ptr());
+        abi::download_failed(state, guid.as_ptr(), c("Server returned an error (HTTP 404)").as_ptr());
     }
     assert_eq!(unsafe { abi::download_status_at(state, 0) }, 2);
     assert_eq!(
@@ -618,7 +621,7 @@ fn a_download_still_in_progress_when_the_browser_closes_is_orphaned_on_restart()
     let f = guard("downloads-orphan");
     let state = abi::state_new();
     unsafe {
-        abi::download_started(state, c("https://example.com/c.zip").as_ptr(), c("/tmp/c.zip").as_ptr());
+        abi::download_started(state, c("g-1").as_ptr(), c("https://example.com/c.zip").as_ptr(), c("/tmp/c.zip").as_ptr());
         abi::flush_settings(state);
         abi::state_free(state);
     }

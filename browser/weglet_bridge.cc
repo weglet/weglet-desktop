@@ -380,26 +380,33 @@ std::vector<WegletBridge::DownloadEntry> WegletBridge::Downloads() const {
   return downloads;
 }
 
-void WegletBridge::DownloadStarted(const std::string& url, const std::string& path) {
+void WegletBridge::DownloadStarted(const std::string& guid,
+                                   const std::string& url,
+                                   const std::string& path) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  weglet_download_started(state_, url.c_str(), path.c_str());
+  weglet_download_started(state_, guid.c_str(), url.c_str(), path.c_str());
 }
 
-void WegletBridge::DownloadProgress(const std::string& url,
+void WegletBridge::DownloadProgress(const std::string& guid,
+                                    const std::string& path,
                                     uint64_t bytes_downloaded,
                                     int64_t total_bytes) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  weglet_download_progress(state_, url.c_str(), bytes_downloaded, total_bytes);
+  weglet_download_progress(state_, guid.c_str(), path.c_str(), bytes_downloaded,
+                           total_bytes);
 }
 
-void WegletBridge::DownloadCompleted(const std::string& url, uint64_t size_bytes) {
+void WegletBridge::DownloadCompleted(const std::string& guid,
+                                     const std::string& path,
+                                     uint64_t size_bytes) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  weglet_download_completed(state_, url.c_str(), size_bytes);
+  weglet_download_completed(state_, guid.c_str(), path.c_str(), size_bytes);
 }
 
-void WegletBridge::DownloadFailed(const std::string& url, const std::string& message) {
+void WegletBridge::DownloadFailed(const std::string& guid,
+                                  const std::string& message) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  weglet_download_failed(state_, url.c_str(), message.c_str());
+  weglet_download_failed(state_, guid.c_str(), message.c_str());
 }
 
 void WegletBridge::ClearDownloadHistory() {

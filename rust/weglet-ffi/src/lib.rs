@@ -1323,6 +1323,7 @@ pub unsafe extern "C" fn weglet_download_path_at(
 #[no_mangle]
 pub unsafe extern "C" fn weglet_download_started(
     state: *mut WegletState,
+    guid: *const c_char,
     url: *const c_char,
     path: *const c_char,
 ) {
@@ -1330,20 +1331,27 @@ pub unsafe extern "C" fn weglet_download_started(
     let Some(state) = (unsafe { as_mut(state) }) else {
         return;
     };
-    let (Some(url), Some(path)) = (unsafe { str_from_c(url) }, unsafe { str_from_c(path) })
-    else {
+    // SAFETY: contract of str_from_c, every argument.
+    let (Some(guid), Some(url), Some(path)) = (
+        unsafe { str_from_c(guid) },
+        unsafe { str_from_c(url) },
+        unsafe { str_from_c(path) },
+    ) else {
         return;
     };
-    state.downloads.started(url, std::path::Path::new(path));
+    state.downloads.started(guid, url, std::path::Path::new(path));
     state.persist_downloads();
 }
 
-// `total_bytes` is passed as -1 when the server sent no Content-Length.
+// `path` is the target path, empty until the download manager has decided
+// it. `total_bytes` is passed as -1 when the server sent no
+// Content-Length.
 #[doc = safety_doc!()]
 #[no_mangle]
 pub unsafe extern "C" fn weglet_download_progress(
     state: *mut WegletState,
-    url: *const c_char,
+    guid: *const c_char,
+    path: *const c_char,
     bytes_downloaded: u64,
     total_bytes: i64,
 ) {
@@ -1351,11 +1359,16 @@ pub unsafe extern "C" fn weglet_download_progress(
     let Some(state) = (unsafe { as_mut(state) }) else {
         return;
     };
-    let Some(url) = (unsafe { str_from_c(url) }) else {
+    // SAFETY: contract of str_from_c, both arguments.
+    let (Some(guid), Some(path)) = (unsafe { str_from_c(guid) }, unsafe { str_from_c(path) })
+    else {
         return;
     };
     let total = (total_bytes >= 0).then_some(total_bytes as u64);
-    if state.downloads.update_progress(url, bytes_downloaded, total) {
+    if state
+        .downloads
+        .update_progress(guid, std::path::Path::new(path), bytes_downloaded, total)
+    {
         state.persist_downloads();
     }
 }
@@ -1364,17 +1377,23 @@ pub unsafe extern "C" fn weglet_download_progress(
 #[no_mangle]
 pub unsafe extern "C" fn weglet_download_completed(
     state: *mut WegletState,
-    url: *const c_char,
+    guid: *const c_char,
+    path: *const c_char,
     size_bytes: u64,
 ) {
     // SAFETY: contract of as_mut and str_from_c.
     let Some(state) = (unsafe { as_mut(state) }) else {
         return;
     };
-    let Some(url) = (unsafe { str_from_c(url) }) else {
+    // SAFETY: contract of str_from_c, both arguments.
+    let (Some(guid), Some(path)) = (unsafe { str_from_c(guid) }, unsafe { str_from_c(path) })
+    else {
         return;
     };
-    if state.downloads.mark_completed(url, size_bytes) {
+    if state
+        .downloads
+        .mark_completed(guid, std::path::Path::new(path), size_bytes)
+    {
         state.persist_downloads();
     }
 }
@@ -1383,18 +1402,19 @@ pub unsafe extern "C" fn weglet_download_completed(
 #[no_mangle]
 pub unsafe extern "C" fn weglet_download_failed(
     state: *mut WegletState,
-    url: *const c_char,
+    guid: *const c_char,
     message: *const c_char,
 ) {
     // SAFETY: contract of as_mut and str_from_c.
     let Some(state) = (unsafe { as_mut(state) }) else {
         return;
     };
-    let (Some(url), Some(message)) = (unsafe { str_from_c(url) }, unsafe { str_from_c(message) })
+    // SAFETY: contract of str_from_c, both arguments.
+    let (Some(guid), Some(message)) = (unsafe { str_from_c(guid) }, unsafe { str_from_c(message) })
     else {
         return;
     };
-    if state.downloads.mark_failed(url, message.to_string()) {
+    if state.downloads.mark_failed(guid, message.to_string()) {
         state.persist_downloads();
     }
 }

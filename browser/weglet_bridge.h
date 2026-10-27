@@ -215,11 +215,18 @@ class WegletBridge {
   // content::DownloadItem's own lifecycle -- see the .cc for who calls
   // them.
   std::vector<DownloadEntry> Downloads() const;
-  void DownloadStarted(const std::string& url, const std::string& path);
+  void DownloadStarted(const std::string& guid,
+                       const std::string& url,
+                       const std::string& path);
   // `total_bytes` is -1 when the server sent no Content-Length.
-  void DownloadProgress(const std::string& url, uint64_t bytes_downloaded, int64_t total_bytes);
-  void DownloadCompleted(const std::string& url, uint64_t size_bytes);
-  void DownloadFailed(const std::string& url, const std::string& message);
+  void DownloadProgress(const std::string& guid,
+                        const std::string& path,
+                        uint64_t bytes_downloaded,
+                        int64_t total_bytes);
+  void DownloadCompleted(const std::string& guid,
+                         const std::string& path,
+                         uint64_t size_bytes);
+  void DownloadFailed(const std::string& guid, const std::string& message);
   void ClearDownloadHistory();
 
   // OpenPhish's public feed of known-phishing URLs. See CheckThreatFeed.

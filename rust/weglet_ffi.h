@@ -185,12 +185,24 @@ char* weglet_download_error_message_at(const WegletState* state, size_t index);
 uint64_t weglet_download_started_at_at(const WegletState* state, size_t index);
 // The file's own path on disk, for "reveal in folder" and "open".
 char* weglet_download_path_at(const WegletState* state, size_t index);
-void weglet_download_started(WegletState* state, const char* url, const char* path);
+// A download is named by its DownloadItem GUID: two downloads of one URL
+// are two records. `path` is the target path, empty until the download
+// manager has decided it.
+void weglet_download_started(WegletState* state,
+                             const char* guid,
+                             const char* url,
+                             const char* path);
 // `total_bytes` is -1 when the server sent no Content-Length.
-void weglet_download_progress(
-    WegletState* state, const char* url, uint64_t bytes_downloaded, int64_t total_bytes);
-void weglet_download_completed(WegletState* state, const char* url, uint64_t size_bytes);
-void weglet_download_failed(WegletState* state, const char* url, const char* message);
+void weglet_download_progress(WegletState* state,
+                              const char* guid,
+                              const char* path,
+                              uint64_t bytes_downloaded,
+                              int64_t total_bytes);
+void weglet_download_completed(WegletState* state,
+                               const char* guid,
+                               const char* path,
+                               uint64_t size_bytes);
+void weglet_download_failed(WegletState* state, const char* guid, const char* message);
 void weglet_clear_download_history(WegletState* state);
 
 // Threat feed: OpenPhish's public feed of known-phishing URLs, kept as

@@ -21,6 +21,7 @@
 #include "content/public/common/page_zoom.h"
 #include "third_party/blink/public/mojom/choosers/file_chooser.mojom-forward.h"
 #include "ui/base/accelerators/accelerator.h"
+#include "ui/base/window_open_disposition.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/views/controls/webview/unhandled_keyboard_event_handler.h"
 #include "ui/views/widget/widget_delegate.h"
@@ -233,18 +234,23 @@ class WegletWindow : public views::WidgetDelegate,
 
   // content::WebContentsDelegate:
   void CloseContents(content::WebContents* source) override;
+  // A link or a navigation the page itself cannot start: in the tab it came
+  // from, or in a new one, as `params.disposition` says.
   content::WebContents* OpenURLFromTab(
       content::WebContents* source,
       const content::OpenURLParams& params,
       base::OnceCallback<void(content::NavigationHandle&)>
           navigation_handle_callback) override;
-  bool IsWebContentsCreationOverridden(
-      content::RenderFrameHost* opener,
-      content::SiteInstance* source_site_instance,
-      content::mojom::WindowContainerType window_container_type,
-      const GURL& opener_url,
-      const std::string& frame_name,
-      const GURL& target_url) override;
+  // window.open: content has already created `new_contents`, with its
+  // opener, and this makes it a tab.
+  content::WebContents* AddNewContents(
+      content::WebContents* source,
+      std::unique_ptr<content::WebContents> new_contents,
+      const GURL& target_url,
+      WindowOpenDisposition disposition,
+      const blink::mojom::WindowFeatures& window_features,
+      bool user_gesture,
+      bool* was_blocked) override;
   bool HandleContextMenu(content::RenderFrameHost& render_frame_host,
                          const content::ContextMenuParams& params) override;
   // A key the active WebContents (toolbar or tab) didn't want -- the only
@@ -322,9 +328,22 @@ class WegletWindow : public views::WidgetDelegate,
 
   static void QuitIfLastWindow();
 
-  // Builds a WebContents for `id` and shows it: on startup for the
-  // restored active tab, and lazily for the others.
+  // Builds a WebContents for `id` and loads the model's URL in it: on
+  // startup for the restored active tab, and lazily for the others.
   content::WebContents* EnsureContentsFor(uint64_t id);
+
+  // Makes `contents` the WebContents of tab `id`, without loading anything:
+  // the caller, or content itself for window.open, starts the navigation.
+  content::WebContents* AttachContents(
+      uint64_t id,
+      std::unique_ptr<content::WebContents> contents);
+
+  // Opens a tab in the model for `url` and attaches `contents` to it. A
+  // background disposition leaves the current tab in front. Null at the
+  // tab ceiling, with `contents` dropped.
+  content::WebContents* AddTab(const GURL& url,
+                               WindowOpenDisposition disposition,
+                               std::unique_ptr<content::WebContents> contents);
 
   // Points the visible area at the active tab's contents, creating them if
   // this is the first time that tab is shown.

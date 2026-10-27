@@ -603,9 +603,24 @@ content::WebContents* WegletWindow::EnsureContentsFor(uint64_t id) {
     return found->second.contents.get();
   }
 
+  content::WebContents* contents = AttachContents(
+      id, content::WebContents::Create(
+              content::WebContents::CreateParams(browser_context_)));
+
+  // Not checked here: a restored URL may have been blocked since the
+  // session was written, but the throttle sees it like any other navigation.
+  content::NavigationController::LoadURLParams load(
+      ResolveForEngine(bridge_->TabUrl(id)));
+  load.transition_type = ui::PAGE_TRANSITION_AUTO_TOPLEVEL;
+  contents->GetController().LoadURLWithParams(load);
+  return contents;
+}
+
+content::WebContents* WegletWindow::AttachContents(
+    uint64_t id,
+    std::unique_ptr<content::WebContents> contents) {
   Tab tab;
-  content::WebContents::CreateParams params(browser_context_);
-  tab.contents = content::WebContents::Create(params);
+  tab.contents = std::move(contents);
   tab.contents->SetDelegate(this);
   WindowHolder::CreateForWebContents(tab.contents.get(), this);
   // Isolated, not the default per-host mode: the default mode zoomed the
@@ -617,16 +632,28 @@ content::WebContents* WegletWindow::EnsureContentsFor(uint64_t id) {
   tab.observer =
       std::make_unique<WegletTabObserver>(this, id, tab.contents.get());
 
-  content::WebContents* contents = tab.contents.get();
+  content::WebContents* attached = tab.contents.get();
   tabs_.emplace(id, std::move(tab));
+  return attached;
+}
 
-  // Not checked here: a restored URL may have been blocked since the
-  // session was written, but the throttle sees it like any other navigation.
-  content::NavigationController::LoadURLParams load(
-      ResolveForEngine(bridge_->TabUrl(id)));
-  load.transition_type = ui::PAGE_TRANSITION_AUTO_TOPLEVEL;
-  contents->GetController().LoadURLWithParams(load);
-  return contents;
+content::WebContents* WegletWindow::AddTab(
+    const GURL& url,
+    WindowOpenDisposition disposition,
+    std::unique_ptr<content::WebContents> contents) {
+  const uint64_t in_front = bridge_->ActiveTabId(window_id_);
+  const uint64_t id = bridge_->OpenTab(window_id_, url.spec());
+  if (id == 0) {
+    // The model's own ceiling. Reported rather than silently ignored.
+    LOG(WARNING) << "tab limit reached, dropping a new tab";
+    return nullptr;
+  }
+  content::WebContents* attached = AttachContents(id, std::move(contents));
+  if (disposition == WindowOpenDisposition::NEW_BACKGROUND_TAB) {
+    bridge_->ActivateTab(in_front);
+  }
+  ShowActiveTab();
+  return attached;
 }
 
 void WegletWindow::ShowActiveTab() {
@@ -1244,27 +1271,48 @@ content::WebContents* WegletWindow::OpenURLFromTab(
     const content::OpenURLParams& params,
     base::OnceCallback<void(content::NavigationHandle&)>
         navigation_handle_callback) {
-  // Every disposition lands in a tab, not a window we do not control.
-  const uint64_t id = bridge_->OpenTab(window_id_, params.url.spec());
-  if (id == 0) {
-    LOG(WARNING) << "tab limit reached, dropping window.open";
+  // The toolbar is not a tab, and navigating it away would take the
+  // window's controls with it.
+  content::WebContents* target = nullptr;
+  if (params.disposition == WindowOpenDisposition::CURRENT_TAB &&
+      TabIdFor(source) != 0) {
+    target = source;
+  } else {
+    // Every other disposition lands in a tab, not a window we do not
+    // control.
+    target = AddTab(params.url, params.disposition,
+                    content::WebContents::Create(
+                        content::WebContents::CreateParams(browser_context_)));
+  }
+  if (!target) {
     return nullptr;
   }
-  content::WebContents* contents = EnsureContentsFor(id);
-  ShowActiveTab();
-  return contents;
+
+  // From `params`, not a bare URL: the initiator, referrer, POST body and
+  // user gesture are what make a page's navigation stay the page's. A
+  // navigation without an initiator counts as the user's own, and sends
+  // SameSite=Strict cookies to the site the page linked to.
+  base::WeakPtr<content::NavigationHandle> handle =
+      target->GetController().LoadURLWithParams(
+          content::NavigationController::LoadURLParams(params));
+  if (handle && navigation_handle_callback) {
+    std::move(navigation_handle_callback).Run(*handle);
+  }
+  return target;
 }
 
-bool WegletWindow::IsWebContentsCreationOverridden(
-    content::RenderFrameHost* opener,
-    content::SiteInstance* source_site_instance,
-    content::mojom::WindowContainerType window_container_type,
-    const GURL& opener_url,
-    const std::string& frame_name,
-    const GURL& target_url) {
-  // True means the embedder handles this, so content does not create a
-  // bare popup. The navigation arrives through OpenURLFromTab instead.
-  return true;
+content::WebContents* WegletWindow::AddNewContents(
+    content::WebContents* source,
+    std::unique_ptr<content::WebContents> new_contents,
+    const GURL& target_url,
+    WindowOpenDisposition disposition,
+    const blink::mojom::WindowFeatures& window_features,
+    bool user_gesture,
+    bool* was_blocked) {
+  // Popups and new windows become tabs too. Content created the contents,
+  // so the opener can reach it: a sign-in popup posts its result back
+  // through window.opener.
+  return AddTab(target_url, disposition, std::move(new_contents));
 }
 
 bool WegletWindow::HandleContextMenu(content::RenderFrameHost& render_frame_host,

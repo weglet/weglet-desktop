@@ -876,10 +876,13 @@ void WegletWindow::ShowSecurityNotice(content::WebContents* contents) {
 }
 
 void WegletWindow::DismissSecurityNotice(content::WebContents* contents) {
+  if (!contents) {
+    return;
+  }
   if (security_guard_) {
     security_guard_->ClearPendingNotice(contents);
   }
-  if (TabIdFor(contents) == 0 || contents == nullptr) {
+  if (TabIdFor(contents) == 0) {
     return;
   }
   // The throttle cancelled the navigation rather than committing an error

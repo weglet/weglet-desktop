@@ -138,7 +138,7 @@ impl Paths {
     // in a list, alongside profiles this process is not running as.
     pub fn peek_accent_color(name: &str) -> String {
         Self::named_dir(name)
-            .and_then(|dir| crate::Settings::load(&dir.join("settings.json")).ok())
+            .and_then(|dir| crate::Settings::peek(&dir.join("settings.json")).ok())
             .map(|settings| settings.accent_color)
             .unwrap_or_else(|| crate::DEFAULT_ACCENT.to_string())
     }

@@ -847,3 +847,29 @@ url = \"https://a.example/\"
         assert!(!profile.join(format!("{name}.toml")).exists(), "{name}.toml");
     }
 }
+
+// A profile's own engines table written for an older Weglet is TOML: it is
+// converted, and the profile offers its engines.
+#[test]
+fn a_profile_engines_table_written_as_toml_is_converted_and_used() {
+    let f = guard("legacy-engines");
+    let profile = f.dir.join("Weglet").join("Default");
+    std::fs::create_dir_all(&profile).unwrap();
+    std::fs::write(
+        profile.join("engines.toml"),
+        "[[engine]]
+id = \"only\"
+label = \"Only\"
+template = \"https://only.example/?q=%s\"
+",
+    )
+    .unwrap();
+
+    let state = abi::state_new();
+    assert_eq!(unsafe { abi::engine_count(state) }, 1);
+    assert_eq!(take(unsafe { abi::engine_id_at(state, 0) }), "only");
+    assert_eq!(take(unsafe { abi::search_engine(state) }), "only");
+    unsafe { abi::state_free(state) };
+    assert!(profile.join("engines.json").exists());
+    assert!(!profile.join("engines.toml").exists());
+}

@@ -256,6 +256,14 @@ impl Settings {
         crate::store::save(path, self)
     }
 
+    // Another profile's settings, read without writing anything -- see
+    // store::peek.
+    pub fn peek(path: &Path) -> Result<Self, Error> {
+        let mut settings: Self = crate::store::peek(path)?;
+        settings.clamp();
+        Ok(settings)
+    }
+
     // Applied on load, not on save, so an oversized file is rewritten
     // smaller only once the user changes something.
     fn clamp(&mut self) {

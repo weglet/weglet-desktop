@@ -169,7 +169,7 @@ The two structured files are JSON and may carry `//` comments. A
 `brands.toml` or `engines.toml` written for an older Weglet is converted to
 JSON the first time the profile opens, as are the profile's own stores.
 
-A malformed file is reported and ignored, never fatal, and the structured
+A malformed file is ignored, never fatal, and the structured
 ones are rejected whole rather than partly applied — half a brand table is
 a browser that catches some impostors and waves others through, with
 nothing to say which.

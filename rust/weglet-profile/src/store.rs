@@ -2,7 +2,8 @@
 //
 // How a profile store reaches the disk: JSON, written whole through
 // atomic::write. Read leniently, so a file edited by hand may carry
-// comments and trailing commas.
+// comments and trailing commas -- though a store's own file is rewritten
+// whole on the next save, and its comments with it.
 //
 // An older Weglet wrote these files as TOML. A store with no JSON file yet
 // but a TOML one beside it is converted once: the JSON is written, and the
@@ -19,12 +20,33 @@ use crate::Error;
 pub(crate) fn load<T: DeserializeOwned + Default>(path: &Path) -> Result<T, Error> {
     migrate_legacy_toml(path)?;
     match read(path)? {
-        Some(text) => serde_json_lenient::from_str(&text).map_err(|source| Error::Parse {
-            path: path.to_path_buf(),
+        Some(text) => parse(path, &text),
+        None => Ok(T::default()),
+    }
+}
+
+// As load, but never writes: for a profile this process does not run,
+// whose files belong to whichever process opens it. A TOML file is read
+// where it is, not converted.
+pub(crate) fn peek<T: DeserializeOwned + Default>(path: &Path) -> Result<T, Error> {
+    if let Some(text) = read(path)? {
+        return parse(path, &text);
+    }
+    let legacy = legacy_toml_path(path);
+    match read(&legacy)? {
+        Some(text) => toml::from_str(&text).map_err(|source| Error::LegacyParse {
+            path: legacy,
             source,
         }),
         None => Ok(T::default()),
     }
+}
+
+fn parse<T: DeserializeOwned>(path: &Path, text: &str) -> Result<T, Error> {
+    serde_json_lenient::from_str(text).map_err(|source| Error::Parse {
+        path: path.to_path_buf(),
+        source,
+    })
 }
 
 pub(crate) fn save<T: Serialize>(path: &Path, value: &T) -> Result<(), Error> {
@@ -51,10 +73,16 @@ pub fn migrate_legacy_toml(json_path: &Path) -> Result<(), Error> {
         source,
     })?;
     save(json_path, &value)?;
-    std::fs::remove_file(&legacy).map_err(|source| Error::Write {
-        path: legacy,
-        source,
-    })
+    // NotFound: another process converted the same file at the same time.
+    // Its JSON is the same as this one, and the TOML is gone either way.
+    match std::fs::remove_file(&legacy) {
+        Ok(()) => Ok(()),
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(source) => Err(Error::Write {
+            path: legacy,
+            source,
+        }),
+    }
 }
 
 fn legacy_toml_path(json_path: &Path) -> PathBuf {
@@ -143,6 +171,16 @@ mod tests {
         std::fs::write(dir.join("sample.json"), "{\"name\": \"new\"}").unwrap();
         let sample: Sample = load(&dir.join("sample.json")).unwrap();
         assert_eq!(sample.name, "new");
+    }
+
+    #[test]
+    fn peeking_reads_a_legacy_file_without_converting_it() {
+        let dir = dir("peek");
+        std::fs::write(dir.join("sample.toml"), "name = \"a\"\n").unwrap();
+        let sample: Sample = peek(&dir.join("sample.json")).unwrap();
+        assert_eq!(sample.name, "a");
+        assert!(dir.join("sample.toml").exists());
+        assert!(!dir.join("sample.json").exists());
     }
 
     // The TOML is the only copy until the JSON is written: it must survive
